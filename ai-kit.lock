@@ -1,0 +1,15 @@
+schema = 1
+ai_kit_version = "0.1.0"
+profile_schema = 1
+adapter_schema = 1
+profile_digest = "sha256:cd525d83fdce2a54c9719ad50f546989a506747a6f8ccd750d4f5ecd062be882"
+
+[adapters.codex]
+enabled = true
+version = 1
+
+[generated]
+".agents/skills/manage-goal/SKILL.md" = "sha256:cb968d36021cb35d202131d6371d848c17dd42c5094617db27683fd3c2f66959"
+".agents/skills/verify-goal/SKILL.md" = "sha256:e2643150ed5c0022ac3ec5df5000af374c924fe29e6d0d0b13cf8e208f6aca0f"
+".github/workflows/verify.yml" = "sha256:cb4e4563106b341eba1666e3ae0531d79e7d0e8ffe844329b57cc2dd925513ca"
+"AGENTS.md" = "sha256:d54c9509f03fb3e6bc7291cec1c85be2e6c4f5fff22e8af7ef07fb4b280294df"
