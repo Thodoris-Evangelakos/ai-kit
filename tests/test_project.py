@@ -28,13 +28,18 @@ def test_init_sync_doctor_and_idempotence(tmp_path: Path) -> None:
     assert not result.problems
     assert load_profile(root).modules == ("strict-verification",)
     assert "AGENTS.md" in load_lock(root).generated
-    assert (root / ".agents/skills/manage-goal/SKILL.md").is_file()
+    assert (root / ".agents/skills/verify-project/SKILL.md").is_file()
     assert (root / ".ai/current/STATUS.md").is_file()
     assert (root / "dev").stat().st_mode & 0o111
     assert ".ai-local/" in (root / ".gitignore").read_text()
     assert not init_project(root).changes
     assert sync_project(root, check=True).clean
-    assert all(check.ok for check in doctor_project(root))
+    assert not (root / ".ai/goals").exists()
+    checks = doctor_project(root)
+    assert all(check.ok for check in checks if check.name != "verification")
+    assert "no implementation configured" in next(
+        check.detail for check in checks if check.name == "verification"
+    )
 
 
 @pytest.mark.parametrize("relative", ["AGENTS.md", ".github/workflows/verify.yml"])
@@ -106,12 +111,43 @@ def test_professional_workflow_calls_project_commands(tmp_path: Path) -> None:
     workflow = (root / ".github/workflows/verify.yml").read_text()
     assert "contents: read" in workflow
     actions = re.findall(r"uses: (.+)", workflow)
-    assert len(actions) == 2
+    assert len(actions) == 3
     assert all(re.fullmatch(r"[\w/-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+", action) for action in actions)
-    assert "fetch-depth: 0" in workflow
+    assert "fetch-depth: 2" in workflow
+    assert "include-hidden-files: true" in workflow
+    assert "if: always()" in workflow
     assert re.findall(r"run: (.+)", workflow) == ["./dev setup", "./dev verify"]
     lock = (root / "ai-kit.lock").read_bytes()
     assert sync_project(root, check=True).clean
     assert sync_project(root).clean
     assert (root / ".github/workflows/verify.yml").read_text() == workflow
     assert (root / "ai-kit.lock").read_bytes() == lock
+
+
+def test_policy_is_project_owned_and_sync_validates_it(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    init_project(root, modules=("webapp",))
+    policy = root / ".ai/verification.toml"
+    assert '"browser", "runtime-errors"' in policy.read_text()
+    custom = 'schema = 1\nrequired = ["custom:behavior"]\n'
+    policy.write_text(custom)
+    assert sync_project(root, check=True).clean
+    assert sync_project(root).clean
+    assert policy.read_text() == custom
+    assert ".ai/verification.toml" not in load_lock(root).generated
+    policy.write_text("schema = 99\nrequired = []\n")
+    assert sync_project(root, check=True).problems
+    assert not all(check.ok for check in doctor_project(root))
+    policy.unlink()
+    assert sync_project(root).problems
+    assert not policy.exists()
+
+
+def test_sync_preserves_project_owned_legacy_notes(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    init_project(root)
+    legacy = root / ".ai/goals/active/user-notes.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("Uncommitted human acceptance notes\n")
+    assert sync_project(root).clean
+    assert legacy.read_text() == "Uncommitted human acceptance notes\n"

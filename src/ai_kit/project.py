@@ -71,45 +71,46 @@ Read `.ai/profile.toml` before substantial work. For the current task, read
 `.ai/current/STATUS.md` and relevant `.ai/current/FINDINGS.md` entries.
 
 Requirements in `.ai/intent/` are authoritative. Accepted architectural
-decisions live in `.ai/decisions/`. Goal acceptance contracts live in
-`.ai/goals/`. Do not promote assumptions into requirements or decisions.
+decisions live in `.ai/decisions/`. Project verification policy lives in
+`.ai/verification.toml`. Do not promote assumptions into requirements or decisions.
 
-Use relevant skills in `.agents/skills/`. Before declaring a goal complete,
-satisfy its acceptance contract and required verification policy. Use
-`./dev check` for fast feedback and `./dev verify` for completion evidence.
+Use the harness's native goal/task mechanisms and relevant `.agents/skills/`.
+Before claiming completion, inspect the verification policy, ensure meaningful
+tests/proofs cover the change, and run `./dev verify`. Required evidence must
+pass at the current commit; failing, unknown, or stale evidence is not success.
+Use `./dev check` for fast feedback.
 
 Record only high-signal, current discoveries in `.ai/current/FINDINGS.md`;
 delete stale entries. Git preserves history.
 """
 
-MANAGE_GOAL = """---
-name: manage-goal
-description: Create or update an explicit goal acceptance contract before implementation.
+VERIFY_PROJECT = """---
+name: verify-project
+description: Design meaningful checks and run the repository verification policy.
 ---
 
-# Manage a goal
+# Verify project work
 
-Use `ai-kit goal new ID --title TITLE --intent INTENT --accept CRITERION` and
-add required `--check NAME=COMMAND` entries. Start from approved intent, not
-from the implementation. Keep criteria observable and independent of code
-structure. Commit the contract. Move READY → ACTIVE → IMPLEMENTED with
-`ai-kit goal state ID STATE`. Do not change accepted intent or decisions
-silently. `ai-kit goal show ID` displays the contract.
-"""
+Use the harness's goal/task for the requested outcome and task-specific
+acceptance. Inspect `.ai/verification.toml` and the affected system before
+choosing tests or proofs. The agent designs the verification; AI Kit enforces
+that the project-required mechanisms actually run.
 
-VERIFY_GOAL = """---
-name: verify-goal
-description: Verify a goal at the current Git commit and apply the completion gate.
----
+Permanent tests should protect accepted user behavior, system invariants,
+important interfaces, meaningful failure modes, security properties,
+production regressions, recurring defects, or expensive-to-discover breakage.
+Do not add tests merely because a line changed, a branch exists, coverage can
+increase, or a dependency can be mocked. Prefer real behavior and integration
+evidence to implementation-detail assertions or mock-only confidence.
 
-# Verify a goal
-
-Run `./dev check` during development. Run `./dev verify` before completion if
-the contract requires it. `ai-kit goal verify ID` executes every command in
-the goal contract and records results at the current commit. Review the
-acceptance criteria and actual product behavior. Then run
-`ai-kit goal complete ID`; it refuses missing, failing, unknown, or stale evidence. Keep
-failure artifacts under ignored `.ai-local/artifacts/`.
+Run `./dev check` while iterating. Commit the product and policy, then run
+`./dev verify` before claiming completion. It delegates to `ai-kit verify`,
+which always reruns required mechanisms, records logs and commit/policy-bound
+evidence in ignored `.ai-local/evidence/`, and rejects fail/unknown results.
+Policy commands must invoke underlying checks, never `./dev verify` itself.
+Review results against the requested outcome; a green command cannot prove an
+untested outcome. Product/test co-changes are a review signal, not a failure.
+Any new commit or dirty tracked/unignored work requires fresh verification.
 """
 
 LEARNING_SKILL = """---
@@ -128,13 +129,14 @@ never becomes project truth. Do not fabricate a retrospective diary.
 
 WEBAPP_SKILL = """---
 name: verify-webapp
-description: Build and run browser acceptance evidence for a web goal.
+description: Design browser and runtime-error evidence for web application changes.
 ---
 
-# Verify a web goal
+# Verify a web application
 
-Put an independent Playwright acceptance command in `./dev verify` and in the
-goal contract. Exercise the user flow against a real running backend. Assert
+Configure `browser` and `runtime-errors` in `.ai/verification.toml` with real
+verification commands. AI Kit does not supply a browser harness yet.
+Exercise the user flow against a real running backend. Assert
 the mutation response, persisted backend state, and state after reload.
 Collect page errors, unexpected console errors, failed requests, mutation
 4xx/5xx responses, backend exits, and assertion failures. Fail on unexpected
@@ -152,7 +154,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 0 # Goal evidence must remain traceable to its verified commit.
+          fetch-depth: 2 # Parent diff supplies an advisory product/test co-change signal.
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.13"
@@ -160,16 +162,25 @@ jobs:
         run: ./dev setup
       - name: Verify
         run: ./dev verify
+      - name: Verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verification-evidence
+          path: .ai-local/evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
 """
 
 DEV_STUB = """#!/bin/sh
 set -eu
 case "${1:-}" in
-  setup|check|verify)
+  verify) ai-kit verify ;;
+  setup|check|lint|test)
     echo "./dev $1 is unconfigured; add this project's real checks before claiming success" >&2
     exit 2 ;;
   *)
-    echo "usage: ./dev {setup|check|verify}" >&2
+    echo "usage: ./dev {setup|check|lint|test|verify}" >&2
     exit 2 ;;
 esac
 """
@@ -213,8 +224,7 @@ def load_profile(root: Path) -> Profile:
 def render_codex(profile: Profile) -> dict[str, str]:
     generated = {
         "AGENTS.md": ROUTER,
-        ".agents/skills/manage-goal/SKILL.md": MANAGE_GOAL,
-        ".agents/skills/verify-goal/SKILL.md": VERIFY_GOAL,
+        ".agents/skills/verify-project/SKILL.md": VERIFY_PROJECT,
     }
     if "learning" in profile.modules:
         generated[".agents/skills/maintain-learning-journal/SKILL.md"] = LEARNING_SKILL
@@ -323,6 +333,12 @@ def sync_project(root: Path, *, check: bool = False) -> SyncResult:
     lock = load_lock(root)
     rendered = render_codex(profile)
     plan = _sync_plan(root, rendered, lock)
+    from .verification import VerificationError, load_policy
+
+    try:
+        load_policy(root)
+    except VerificationError as exc:
+        plan = SyncResult(plan.changes, (*plan.problems, str(exc)))
     local = root / ".ai-local"
     if local.is_symlink():
         plan = SyncResult(plan.changes, (*plan.problems, "symlinked .ai-local path"))
@@ -425,8 +441,7 @@ def init_project(
     created.append(".ai/profile.toml")
     for relative, content in {
         ".ai/current/STATUS.md": (
-            "# Current status\n\nGoal: none\nState: idle\nCompleted: none\n"
-            "Remaining: none\nBlocked: no\n"
+            "# Current status\n\nWork: none\nCompleted: none\nRemaining: none\nBlocked: no\n"
         ),
         ".ai/current/FINDINGS.md": "# Current findings\n\nNo current cross-agent findings.\n",
         ".ai/intent/README.md": (
@@ -440,8 +455,11 @@ def init_project(
     }.items():
         if _create(root / relative, content):
             created.append(relative)
-    for directory in (".ai/goals/active", ".ai/goals/accepted", ".ai-local"):
-        (root / directory).mkdir(parents=True, exist_ok=True)
+    from .verification import default_policy
+
+    _create(root / ".ai/verification.toml", default_policy(modules, adopted=adopted))
+    created.append(".ai/verification.toml")
+    (root / ".ai-local").mkdir(parents=True, exist_ok=True)
     if "learning" in modules:
         (root / ".ai-local/learning").mkdir(parents=True, exist_ok=True)
     ignore = root / ".gitignore"
@@ -510,10 +528,7 @@ def doctor_project(root: Path) -> tuple[DoctorCheck, ...]:
         exists = path.is_file() and not path.is_symlink()
         if relative.endswith("STATUS.md") and exists:
             content = path.read_text()
-            exists = all(
-                f"{field}:" in content
-                for field in ("Goal", "State", "Completed", "Remaining", "Blocked")
-            )
+            exists = all(f"{field}:" in content for field in ("Completed", "Remaining", "Blocked"))
         checks.append(DoctorCheck(relative, exists, "valid" if exists else "missing or invalid"))
     dev = root / "dev"
     checks.append(
@@ -526,21 +541,13 @@ def doctor_project(root: Path) -> tuple[DoctorCheck, ...]:
         )
     )
     try:
-        from .goals import is_evidence_fresh, list_goals
+        from .verification import configuration_problems, load_policy
 
-        goals = list_goals(root)
-        stale = [
-            goal.id for goal in goals if goal.state == "DONE" and not is_evidence_fresh(root, goal)
-        ]
+        policy = load_policy(root)
+        problems = configuration_problems(root, policy)
         checks.append(
-            DoctorCheck(
-                "goals",
-                not stale,
-                f"{len(goals)} valid goals"
-                if not stale
-                else "stale DONE evidence: " + ", ".join(stale),
-            )
+            DoctorCheck("verification", not problems, "; ".join(problems) or "configured")
         )
-    except (ImportError, OSError, ValueError, RuntimeError) as exc:
-        checks.append(DoctorCheck("goals", False, str(exc)))
+    except (OSError, ValueError, RuntimeError) as exc:
+        checks.append(DoctorCheck("verification", False, str(exc)))
     return tuple(checks)

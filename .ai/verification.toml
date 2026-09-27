@@ -1,0 +1,18 @@
+# Project-owned policy. ./dev verify and CI both execute these requirements.
+schema = 1
+required = ["static", "tests", "custom:lock", "custom:sync", "custom:doctor"]
+
+[requirements.static]
+command = ["./dev", "lint"]
+
+[requirements.tests]
+command = ["./dev", "test"]
+
+[requirements."custom:lock"]
+command = ["uv", "lock", "--check"]
+
+[requirements."custom:sync"]
+command = ["uv", "run", "ai-kit", "sync", "--check"]
+
+[requirements."custom:doctor"]
+command = ["uv", "run", "ai-kit", "doctor"]

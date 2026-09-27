@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import subprocess
 import sys
 import tomllib
@@ -52,63 +51,43 @@ def cli(root: Path, *args: str, exit_code: int = 0) -> str:
     return result.stdout + result.stderr
 
 
-def test_greenfield_goal_gate_and_stale_commit(tmp_path: Path) -> None:
+def test_greenfield_policy_verification_and_freshness(tmp_path: Path) -> None:
     root = tmp_path / "greenfield"
     root.mkdir()
     git(root, "init", "-q", "-b", "main")
     assert "0.1.0" in cli(root, "--version")
+    assert "No such command" in cli(root, "goal", "status", exit_code=2)
     (root / "app.py").write_text("def value():\n    return 0\n")
     cli(root, "init")
     cli(root, "init")
     cli(root, "sync", "--check")
-    cli(root, "doctor")
-    commit(root, "Initial project", ".")
-
-    command = f"{shlex.quote(sys.executable)} -B -c 'from app import value; assert value() == 42'"
-    cli(
-        root,
-        "goal",
-        "new",
-        "value-42",
-        "--title",
-        "Return the expected value",
-        "--intent",
-        "A user gets the approved value",
-        "--accept",
-        "The value is 42 after a fresh process starts",
-        "--check",
-        f"acceptance={command}",
-        "--check",
-        f"verify={command}",
+    assert "no implementation configured" in cli(root, "doctor", exit_code=1)
+    policy = root / ".ai/verification.toml"
+    command = [sys.executable, "-B", "-c", "from app import value; assert value() == 42"]
+    policy.write_text(
+        'schema = 1\nrequired = ["tests"]\n[requirements.tests]\ncommand = '
+        + json.dumps(command)
+        + "\n"
     )
-    commit(root, "Approve acceptance", ".ai/goals")
-    cli(root, "goal", "state", "value-42", "ACTIVE")
-    cli(root, "goal", "state", "value-42", "IMPLEMENTED")
-    cli(root, "goal", "complete", "value-42", exit_code=1)
-    cli(root, "goal", "verify", "value-42", exit_code=1)
-    cli(root, "goal", "complete", "value-42", exit_code=1)
-
+    commit(root, "Initial project and policy", ".")
+    cli(root, "doctor")  # Configuration only: the behavioral check still fails.
+    assert "FAIL" in cli(root, "verify", exit_code=1)
+    cli(root, "verify", "--check", exit_code=1)
     (root / "app.py").write_text("def value():\n    return 42\n")
-    commit(root, "Implement approved value", "app.py")
-    cli(root, "goal", "state", "value-42", "IMPLEMENTED")
-    cli(root, "goal", "verify", "value-42")
+    assert "uncommitted" in cli(root, "verify", exit_code=1)
+    commit(root, "Implement expected behavior", "app.py")
+    cli(root, "verify")
+    cli(root, "verify", "--check")
+    assert git(root, "status", "--porcelain") == ""
     (root / "app.py").write_text("def value():\n    return 13\n")
-    commit(root, "Change product after verification", "app.py")
-    assert "stale" in cli(root, "goal", "complete", "value-42", exit_code=1)
-    (root / "app.py").write_text("def value():\n    return 42\n")
-    commit(root, "Restore approved value", "app.py")
-    cli(root, "goal", "verify", "value-42")
-    cli(root, "goal", "complete", "value-42")
-    assert (root / ".ai/goals/accepted/value-42.toml").is_file()
-    assert not (root / ".ai/goals/active/value-42.toml").exists()
-    commit(root, "Accept verified goal", ".ai/goals")
-    cli(root, "doctor")
-    (root / "app.py").write_text("def value():\n    return 13\n")
-    commit(root, "Regress accepted behavior", "app.py")
-    assert "DONE (stale)" in cli(root, "goal", "status")
+    commit(root, "Regress behavior", "app.py")
+    assert "stale" in cli(root, "verify", "--check", exit_code=1)
+    cli(root, "doctor")  # Doctor never consumes or executes verification evidence.
+    cli(root, "verify", exit_code=1)
+    policy.write_text('schema = 1\nrequired = ["formal:bend"]\n')
+    commit(root, "Require unavailable verifier", ".ai/verification.toml")
+    assert "UNKNOWN" in cli(root, "verify", exit_code=1)
     cli(root, "doctor", exit_code=1)
-    cli(root, "goal", "reopen", "value-42")
-    assert (root / ".ai/goals/active/value-42.toml").is_file()
 
 
 def test_safe_adoption_preserves_failing_evidence(tmp_path: Path) -> None:
@@ -136,7 +115,7 @@ def test_safe_adoption_preserves_failing_evidence(tmp_path: Path) -> None:
     assert tomllib.loads((root / ".ai/CUSTODY.toml").read_text())["managed"] is True
     assert (root / "ai-kit.lock").is_file()
     cli(root, "sync", "--check")
-    cli(root, "doctor")
+    cli(root, "doctor", exit_code=1)  # New policy still needs project commands.
     assert "No measured baseline regression" in cli(root, "baseline", "compare")
     dev.write_text("#!/bin/sh\nexit 8\n")
     assert "unquantified failure changed" in cli(root, "baseline", "compare", exit_code=1)

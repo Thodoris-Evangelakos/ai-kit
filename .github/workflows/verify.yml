@@ -8,7 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 0 # Goal evidence must remain traceable to its verified commit.
+          fetch-depth: 2 # Parent diff supplies an advisory product/test co-change signal.
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.13"
@@ -16,3 +16,11 @@ jobs:
         run: ./dev setup
       - name: Verify
         run: ./dev verify
+      - name: Verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verification-evidence
+          path: .ai-local/evidence/
+          include-hidden-files: true
+          if-no-files-found: warn

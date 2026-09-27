@@ -3,17 +3,14 @@ set -eu
 case "${1:-}" in
   setup) uv sync --dev ;;
   fmt) uv run ruff format src tests ;;
-  lint) uv run ruff check src tests ;;
+  lint)
+    uv run ruff format --check src tests
+    uv run ruff check src tests ;;
   test) PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -q ;;
   check)
-    uv run ruff format --check src tests
-    uv run ruff check src tests
-    PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -q ;;
-  verify)
-    "$0" check
-    uv lock --check
-    uv run ai-kit sync --check
-    uv run ai-kit doctor ;;
+    "$0" lint
+    "$0" test ;;
+  verify) uv run ai-kit verify ;;
   *)
     echo "usage: ./dev {setup|fmt|lint|test|check|verify}" >&2
     exit 2 ;;

@@ -72,6 +72,7 @@ class BaselineComparison:
     status: CheckStatus
     regressions: tuple[str, ...]
     unresolved: tuple[str, ...]
+    checks: dict[str, CheckResult] = field(default_factory=dict)
 
 
 def compare_baseline(
@@ -117,7 +118,7 @@ def compare_baseline(
         status = "unknown"
     else:
         status = "pass"
-    return BaselineComparison(status, tuple(regressions), tuple(unresolved))
+    return BaselineComparison(status, tuple(regressions), tuple(unresolved), dict(current))
 
 
 def _check_target(path: Path) -> None:
@@ -278,6 +279,7 @@ def _run_check(root: Path, command: tuple[str, ...], timeout: float) -> CheckRes
             PYTHONPATH=os.pathsep.join((str(copy), str(copy / "src"))),
             PYTHONDONTWRITEBYTECODE="1",
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+            AI_KIT_BASELINE_RECHECK="1",
         )
         try:
             libc, restrict, ruleset_fd = _landlock_ruleset(copy)
@@ -500,15 +502,9 @@ def _recognized_check(root: Path, command: tuple[str, ...]) -> bool:
     )
 
 
-def recheck_baseline(root: Path, *, timeout: float = 60) -> BaselineComparison:
-    """Rerun recorded checks under Landlock and compare with adoption evidence."""
+def load_baseline(root: Path) -> dict[str, CheckResult]:
+    """Validate recorded baseline checks without executing them."""
 
-    if timeout <= 0:
-        raise ValueError("timeout must be positive")
-    root = Path(root).expanduser().resolve()
-    repository = GitRepository.discover(root)
-    if repository is None or repository.root != root:
-        raise ValueError(f"{root} is not a Git repository root")
     path = root / ".ai/baseline.json"
     if path.is_symlink():
         raise UnsafeWriteError(f"refusing symlinked baseline {path}")
@@ -518,7 +514,19 @@ def recheck_baseline(root: Path, *, timeout: float = 60) -> BaselineComparison:
     raw_checks = baseline.get("checks")
     if not isinstance(raw_checks, dict) or not all(isinstance(name, str) for name in raw_checks):
         raise ValueError(f"invalid adoption checks: {path}")
-    before = {name: _stored_check(value) for name, value in raw_checks.items()}
+    return {name: _stored_check(value) for name, value in raw_checks.items()}
+
+
+def recheck_baseline(root: Path, *, timeout: float = 60) -> BaselineComparison:
+    """Rerun recorded checks under Landlock and compare with adoption evidence."""
+
+    if timeout <= 0:
+        raise ValueError("timeout must be positive")
+    root = Path(root).expanduser().resolve()
+    repository = GitRepository.discover(root)
+    if repository is None or repository.root != root:
+        raise ValueError(f"{root} is not a Git repository root")
+    before = load_baseline(root)
     source = repository.status()
     current = {}
     for name, check in before.items():

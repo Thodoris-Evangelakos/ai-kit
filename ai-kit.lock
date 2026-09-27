@@ -9,7 +9,6 @@ enabled = true
 version = 1
 
 [generated]
-".agents/skills/manage-goal/SKILL.md" = "sha256:cb968d36021cb35d202131d6371d848c17dd42c5094617db27683fd3c2f66959"
-".agents/skills/verify-goal/SKILL.md" = "sha256:e2643150ed5c0022ac3ec5df5000af374c924fe29e6d0d0b13cf8e208f6aca0f"
-".github/workflows/verify.yml" = "sha256:4a952883280945bba41e7b56fd82cf68bd2b4bfca9f8a81e5a3258b4969ae564"
-"AGENTS.md" = "sha256:d54c9509f03fb3e6bc7291cec1c85be2e6c4f5fff22e8af7ef07fb4b280294df"
+".agents/skills/verify-project/SKILL.md" = "sha256:590c2fae489eb5e09d639f3fb380fee8f718bf64d28a620f6374841b624704a2"
+".github/workflows/verify.yml" = "sha256:debe096235aa7dd071af40f273be386fe46ba64488da9296ead57ab59a307c18"
+"AGENTS.md" = "sha256:7a29fdda3906f66a08fe7c8e7fca8d21e6b58fa9da19e379e3ac69888a3988d3"

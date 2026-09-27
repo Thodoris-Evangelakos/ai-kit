@@ -1,8 +1,8 @@
 # AI Kit
 
-AI Kit makes a repository legible, reproducible, and verifiable to a fresh coding agent. It keeps approved intent, accepted decisions, temporary working state, and goal acceptance evidence in separate places.
+AI Kit makes a repository legible, reproducible, and verifiable to a fresh coding agent. The harness owns what work is being pursued. AI Kit owns what evidence the repository requires before that work may be considered verified.
 
-The MVP is Linux first, Python 3.11+, and Codex focused. It uses Git for history and project-owned commands for verification. It has no daemon, web UI, or service dependency.
+The MVP is Linux first, Python 3.11+, and Codex focused. It uses Git for history and project-owned commands for verification. It has no daemon, task tracker, web UI, or service dependency.
 
 ## Install and develop
 
@@ -10,6 +10,8 @@ The MVP is Linux first, Python 3.11+, and Codex focused. It uses Git for history
 uv tool install /path/to/ai-kit
 # From this checkout:
 ./dev setup
+./dev check
+# Commit changes before collecting completion evidence:
 ./dev verify
 ```
 
@@ -17,38 +19,77 @@ An editable global development install is also possible with `uv tool install --
 
 ## Start a project
 
-Run these commands at a Git repository root:
+Run at a Git repository root:
 
 ```sh
 ai-kit init
-ai-kit doctor
+# Configure .ai/verification.toml and the project-owned ./dev commands.
 ai-kit sync --check
+ai-kit doctor
+git add . && git commit -m "Configure project verification"
+./dev verify
 ```
 
-`init` creates a small `AGENTS.md`, `.ai/profile.toml`, current-state files, two Codex skills, `ai-kit.lock`, an ignored `.ai-local/` area, and a `./dev` starter. Replace the starter's failing `setup`, `check`, and `verify` commands with real commands for that project before claiming completion. The `dev` file is project-owned; AI Kit does not regenerate it.
+`init` creates a small `AGENTS.md`, profile, project-owned verification policy, current-state files, a verification-design skill, `ai-kit.lock`, ignored `.ai-local/`, and a `./dev` starter. The starter delegates `verify` to `ai-kit verify`; its other commands deliberately fail until implemented. Initial policy requirements are unconfigured, so `doctor` and verification remain nonzero until real mechanisms are supplied. AI Kit never regenerates the project's `dev` or policy.
 
-Use `--module learning`, `--module webapp`, or `--module professional-repository` to enable optional behavior. The professional module renders a GitHub Actions workflow that calls `./dev setup` then `./dev verify`. Full verification includes `./dev check`, which remains the fast local feedback command. The webapp module provides a focused browser-verification skill; the project must provide its actual Playwright acceptance command.
+`--module webapp` seeds `browser` and `runtime-errors` requirements and supplies design guidance. Both remain UNKNOWN until configured; a browser harness is not included. `--module professional-repository` renders CI using `./dev setup` then `./dev verify` and uploads verification evidence even after failure. `--module learning` adds a private learning skill. Profiles seed policy only at initialization; later profile edits never silently alter it. Other modules currently have no additional deterministic requirements. The effective, overrideable policy is always visible in one file.
 
-`sync` regenerates managed files from the profile. It checks hashes in `ai-kit.lock` and refuses to overwrite manual edits. `sync --check` and `doctor` return nonzero for drift or invalid state. Profile comments and formatting are left alone.
+`sync` checks hashes in `ai-kit.lock`, refuses manual drift, and updates generated files. `sync --check` also validates policy structure. `doctor` checks configuration, required command availability, managed files, and the executable `dev`; it never executes the suite or requires saved passing evidence.
 
-## Goals
+## Verification policy
+
+`.ai/verification.toml` schema 1 separates required capabilities from their implementations:
+
+```toml
+schema = 1
+required = ["static", "tests"]
+
+[requirements.static]
+command = ["./dev", "lint"]
+
+[requirements.tests]
+command = ["./dev", "test"]
+timeout_seconds = 300
+```
+
+`required` is a nonempty list of unique lowercase capability IDs, optionally namespaced with `:`. `requirements` is an optional table mapping those IDs to implementations. Each implementation has a nonempty `command` argv array and an optional positive integer `timeout_seconds` (default 300). Arguments run directly from the repository root, without shell expansion; use an explicit shell command when needed. Unknown fields, invalid schemas, and misspelled configuration keys outside `required` are rejected.
+
+IDs such as `integration`, `property:hypothesis`, `fuzz:libfuzzer`, `security`, `secret-scan`, `formal:bend`, `formal:tla`, `browser:playwright`, and `custom:behavior` use the same command adapter when configured. AI Kit does not supply those tools. An unconfigured ID, including an unfamiliar one, produces UNKNOWN and nonzero, never an implicit pass. `baseline` is the one built-in requirement, using the inherited adoption comparison instead of a command override.
+
+`./dev check` provides fast iterative feedback. `./dev verify` delegates to `ai-kit verify`, which reads the profile and policy and always reruns every required mechanism. Configure underlying commands such as `./dev lint` and `./dev test`; do not call either verification entry point from a requirement. A recursion guard rejects accidental delegation loops. Local verification and CI use this same policy. AI Kit's own policy also checks dependency-lock consistency, managed-file sync, and doctor.
+
+A zero exit code passes a command requirement. Nonzero fails; unavailable commands (including shell exits 126/127), timeouts, missing implementations, or inconclusive baseline comparisons are UNKNOWN. Any required fail or unknown returns nonzero. Invalid configuration or dirty input state returns nonzero before running checks. A check that leaves changed tracked/unignored files or changes HEAD makes the run UNKNOWN. All requirements still run when another requirement fails, and their individual outcomes remain visible.
+
+The agent decides which tests or proofs establish the requested behavior. AI Kit enforces execution, not test quality or automatic test generation. The generated skill guides risk-based testing and real integration evidence. Product/test changes in the current commit produce an advisory review signal, never an automatic failure.
+
+## Evidence and freshness
+
+Every run writes `.ai-local/evidence/run-*/evidence.json` plus command logs, and updates `.ai-local/evidence/latest.json`. Evidence schema 1 records repository path, exact Git commit, policy and profile SHA-256 digests, required IDs, command/adapter configuration, timeouts, pass/fail/unknown results, exit codes, artifact paths, warnings, and timestamp. Baseline results include measured commands, output, counts, and comparison details. Digests use the `sha256:<hex>` format.
+
+Commit the product, profile, policy, and command configuration first. Verification requires a clean tracked/unignored tree, and `.ai-local/` must be ignored. Evidence itself is never committed or used to mutate tracked product state.
 
 ```sh
-ai-kit goal new example --title "Example outcome" --intent "A user can do X" \
-  --accept "X persists after reload" --check verify="./dev verify"
-git add .ai/goals && git commit -m "Define example goal"
-ai-kit goal state example ACTIVE
-# Implement the outcome, then:
-ai-kit goal state example IMPLEMENTED
-ai-kit goal verify example
-ai-kit goal complete example
+ai-kit verify          # Rerun all required mechanisms and record evidence.
+ai-kit verify --check  # Inspect whether the latest saved passing evidence is current.
 ```
 
-The contract must be committed before verification. Verification runs the required commands and records their exit status at the current Git commit. `complete` refuses absent, failed, unknown, or stale evidence and reruns the checks before DONE. A later product commit makes a DONE goal's evidence stale; `ai-kit goal reopen ID` moves it back for fresh verification. Acceptance criteria are written before implementation; passing a command alone does not prove an untested user outcome.
+Freshness requires the same repository path, exact HEAD, identical policy/profile bytes, all required results passing, and a clean tree. Any new commit invalidates old evidence, including metadata-only commits. Ignored local logs do not invalidate it. There are no ancestry scans or moving acceptance files. Merge strategy no longer affects evidence reuse: every resulting commit needs its own verification. CI evidence describes the checkout it actually tested (for PRs, normally GitHub's test merge commit).
+
+Saved evidence is an inspectable local record, not a signed attestation. `--check` does not rerun commands or prove that an external service or ignored runtime input is unchanged. Before claiming completion, run `./dev verify` again and assess the task-specific outcome.
 
 ## Existing repositories
 
-`ai-kit adopt --safe` inventories an existing Git repository, distinguishes claims from observations, runs recognized checks in a Landlock-confined temporary copy, and records a baseline and custody boundary. If confinement is unavailable, verification stays UNKNOWN. Failed checks stay failed; unknown checks stay unknown. It does not repair source code. Aggressive repair is deferred. `ai-kit baseline compare` reruns the inherited check and reports measured regressions; goal completion also refuses regressions or unknown comparisons.
+`ai-kit adopt --safe` inventories an existing Git repository, distinguishes claims from observations, runs recognized checks in a Landlock-confined temporary copy, and records a baseline and custody boundary. If confinement is unavailable, verification stays UNKNOWN. Failed checks stay failed; unknown checks stay unknown. It does not repair source code. Aggressive repair is deferred.
+
+Adoption seeds `baseline` into the policy. A baseline or custody file requires that capability; removing it from `required` is an error. `ai-kit baseline compare` remains available for inspection. Policy verification reruns the same comparison: measured regressions fail and unresolved comparisons are UNKNOWN. An unchanged known inherited failure may satisfy **no regression**, while the evidence still reports the inherited failure; every new policy requirement must pass. Preserve inherited commands separately when converting an old `./dev verify` into the new delegator. A baseline command that recursively invokes policy verification is rejected.
+
+AI Kit itself is initialized, not adopted: it has no baseline or `CUSTODY.toml`.
+
+## Migrating from the pre-1.0 lifecycle
+
+The old `ai-kit goal` commands and generated goal skills have been removed. Move durable requirements into intent/decisions, general checks into `.ai/verification.toml`, and task-specific acceptance into the harness's native goal/task. Commit meaningful old records before removing them so Git retains the history. Review uncommitted notes first. `sync` never deletes project-owned legacy records and refuses to delete a modified generated skill.
+
+Create the policy before running `ai-kit sync` on an older installation, update the project-owned `./dev verify` to delegate to `ai-kit verify`, then commit and verify. Old verification evidence cannot establish success under the new policy. This repository's prior hardening acceptance and evidence remain in Git history and [PR #1](https://github.com/Thodoris-Evangelakos/ai-kit/pull/1).
 
 ## Project files
 
@@ -56,10 +97,11 @@ The contract must be committed before verification. Verification runs the requir
 | --- | --- |
 | `.ai/intent/` | Human-approved requirements and invariants |
 | `.ai/decisions/` | Accepted, durable architectural decisions |
-| `.ai/goals/` | Goal contracts and verification evidence |
+| `.ai/profile.toml` | Project modules and generated guidance |
+| `.ai/verification.toml` | Project-owned required evidence and mechanisms |
 | `.ai/current/` | Curated temporary handoff state |
-| `.ai-local/` | Ignored learning and failure artifacts |
-| `ai-kit.lock` | AI Kit generation, profile digest, and managed file hashes |
-| `./dev` | Repository-owned fast check and completion verification |
+| `.ai-local/evidence/` | Ignored verification records and command logs |
+| `ai-kit.lock` | Generation, profile digest, and managed-file hashes |
+| `./dev` | Project-owned development and verification interface |
 
-AI Kit's own source uses `./dev check` and `./dev verify`; CI calls the same interface.
+The next vertical slice is webapp browser/runtime-error verification. Browser, Bend, TLA+, new adapters, and orchestration are not implemented here.
