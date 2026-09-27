@@ -17,8 +17,8 @@ app = typer.Typer(
 )
 baseline_app = typer.Typer(help="Compare an adopted repository with its measured source baseline.")
 app.add_typer(baseline_app, name="baseline")
-out = Console()
-err = Console(stderr=True)
+out = Console(emoji=False)
+err = Console(stderr=True, emoji=False)
 
 
 def _fail(message: str, code: int = 1) -> None:
