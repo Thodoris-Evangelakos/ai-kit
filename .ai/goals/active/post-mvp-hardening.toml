@@ -1,7 +1,7 @@
 schema = 1
 id = "post-mvp-hardening"
 title = "Harden the existing AI Kit MVP"
-state = "READY"
+state = "IMPLEMENTED"
 intent = "Make the existing MVP trustworthy and internally consistent as specified by the post-MVP hardening request and .ai/intent/AI-KIT-MVP.md, without expanding product scope."
 acceptance = [
   "Product intent states outcomes; a small set of ADRs explains the existing architecture without changing its direction.",

@@ -1,7 +1,7 @@
 # Current status
 
-Goal: none
-State: idle
-Completed: AI Kit 0.1.0 MVP: installable CLI; init, sync, doctor; Codex profiles/skills; commit-bound goal gates; safe adoption and baseline comparison; repository fixtures.
-Remaining: a concrete browser acceptance/runtime-error harness for the webapp module is the next useful extension. Aggressive adoption and other adapters remain deferred.
+Goal: post-mvp-hardening
+State: IMPLEMENTED
+Completed: intent separated into outcomes and four ADRs; generated CI pinned, deduplicated, and given full history; 63 tests and local verification pass; self-hosting hashes and ownership checked.
+Remaining: PR CI, commit-bound goal acceptance, and merge after final CI. The browser acceptance/runtime-error vertical slice remains next; it is not started.
 Blocked: no

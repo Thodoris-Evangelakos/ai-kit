@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -36,13 +37,14 @@ def test_init_sync_doctor_and_idempotence(tmp_path: Path) -> None:
     assert all(check.ok for check in doctor_project(root))
 
 
-def test_drift_is_reported_and_never_overwritten(tmp_path: Path) -> None:
+@pytest.mark.parametrize("relative", ["AGENTS.md", ".github/workflows/verify.yml"])
+def test_drift_is_reported_and_never_overwritten(tmp_path: Path, relative: str) -> None:
     root = repo(tmp_path)
-    init_project(root)
-    path = root / "AGENTS.md"
+    init_project(root, modules=("professional-repository",))
+    path = root / relative
     path.write_text(path.read_text() + "\nHuman addition.\n")
     before = path.read_text()
-    assert any("AGENTS.md" in item for item in sync_project(root, check=True).problems)
+    assert any(relative in item for item in sync_project(root, check=True).problems)
     assert sync_project(root).problems
     assert path.read_text() == before
     assert not all(check.ok for check in doctor_project(root))
@@ -103,7 +105,13 @@ def test_professional_workflow_calls_project_commands(tmp_path: Path) -> None:
     init_project(root, modules=("professional-repository",))
     workflow = (root / ".github/workflows/verify.yml").read_text()
     assert "contents: read" in workflow
-    assert "astral-sh/setup-uv@v10.2.0" in workflow
-    assert "./dev setup" in workflow
-    assert "./dev check" in workflow
-    assert "./dev verify" in workflow
+    actions = re.findall(r"uses: (.+)", workflow)
+    assert len(actions) == 2
+    assert all(re.fullmatch(r"[\w/-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+", action) for action in actions)
+    assert "fetch-depth: 0" in workflow
+    assert re.findall(r"run: (.+)", workflow) == ["./dev setup", "./dev verify"]
+    lock = (root / "ai-kit.lock").read_bytes()
+    assert sync_project(root, check=True).clean
+    assert sync_project(root).clean
+    assert (root / ".github/workflows/verify.yml").read_text() == workflow
+    assert (root / "ai-kit.lock").read_bytes() == lock
