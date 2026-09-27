@@ -1,0 +1,15 @@
+schema = 1
+id = "post-mvp-hardening"
+title = "Harden the existing AI Kit MVP"
+state = "READY"
+intent = "Make the existing MVP trustworthy and internally consistent as specified by the post-MVP hardening request and .ai/intent/AI-KIT-MVP.md, without expanding product scope."
+acceptance = [
+  "Product intent states outcomes; a small set of ADRs explains the existing architecture without changing its direction.",
+  "Generated CI runs setup and full verification once, pins all external actions to upstream-confirmed full commit SHAs with release comments, and keeps read-only permissions.",
+  "Self-hosting sync --check, doctor, and ./dev verify pass; managed hashes are correct; human-owned files are preserved; no adoption or custody artifacts are introduced.",
+  "An implementation branch and PR exercise remote setup and verification successfully when GitHub access permits; any access blocker or workflow product gap is recorded explicitly.",
+  "Tests cover meaningful workflow changes, current-state files remain concise, and browser verification, aggressive adoption, new adapters, and unrelated refactors remain out of scope.",
+]
+
+[checks]
+"verify" = "./dev verify"
