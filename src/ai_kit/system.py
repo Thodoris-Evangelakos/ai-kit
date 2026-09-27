@@ -297,7 +297,7 @@ class GitRepository:
             elif line.startswith("# branch.head "):
                 value = line[len("# branch.head ") :]
                 branch = None if value == "(detached)" else value
-            elif line:
+            elif line and not line.startswith("# "):
                 entries.append(_parse_status_line(line))
         return GitStatus(root=self.root, branch=branch, head=head, entries=tuple(entries))
 

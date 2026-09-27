@@ -1,7 +1,7 @@
 # Current status
 
 Goal: post-mvp-hardening
-State: DONE
-Completed: outcome-only intent and ADRs 0001–0004; pinned, deduplicated CI with full history; 63 tests, sync, doctor, and commit-bound goal completion pass. [PR #1](https://github.com/Thodoris-Evangelakos/ai-kit/pull/1) has [successful remote setup and verification](https://github.com/Thodoris-Evangelakos/ai-kit/actions/runs/36321338357) for the implementation commit.
-Remaining: the webapp/browser acceptance and runtime-error verification vertical slice is next; not started. Aggressive adoption and other adapters remain deferred.
+State: ACTIVE
+Completed: intent/ADRs and generated CI hardening passed local and PR CI; dogfooding reproduced a tracking-branch status bug and added a shared parser fix with a regression check.
+Remaining: reverify the reopened goal and updated PR, then merge with preserved evidence history. Browser acceptance/runtime-error verification remains next and is not started.
 Blocked: no
