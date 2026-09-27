@@ -149,9 +149,13 @@ def test_repository_is_found_from_inside_a_subdirectory(repo: Path) -> None:
     assert repository.root == repo.resolve()
 
 
+@pytest.mark.parametrize("tracking", [False, True])
 def test_status_reports_clean_repository_head_and_branch(
-    repo: Path, git_env: dict[str, str]
+    repo: Path, git_env: dict[str, str], tracking: bool
 ) -> None:
+    if tracking:
+        run_git(["branch", "upstream"], cwd=repo, env=git_env)
+        run_git(["branch", "--set-upstream-to=upstream"], cwd=repo, env=git_env)
     repository = GitRepository.discover(repo)
     assert repository is not None
 
