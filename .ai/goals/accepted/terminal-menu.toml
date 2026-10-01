@@ -1,7 +1,7 @@
 schema = 1
 id = "terminal-menu"
 title = "Navigate AI Kit in the terminal"
-state = "IMPLEMENTED"
+state = "DONE"
 intent = "Use an in-terminal selection interface to change profile modules and run common project actions without remembering their CLI commands."
 acceptance = [
   "Running ai-kit in an interactive terminal opens a keyboard-driven menu; ai-kit menu -C selects a repository, while help, existing commands, and noninteractive use remain available without hanging.",
@@ -16,13 +16,14 @@ acceptance = [
 "verify" = "./dev verify"
 
 [evidence]
-commit = "c64399043e0f8d275e8537f9821c156db05c62fb"
+commit = "6f45f36c4feb7ff78a2db04702a43a2d0725eb3c"
 contract_sha256 = "939c9df7399bb900f89fe2de46f6dd78ca4148b8c5f85b01dceb314b5aa1caf5"
 result = "pass"
 warnings = [
   "Acceptance contract and other files changed together in f632d64ff96e: .ai/current/FINDINGS.md, .ai/current/STATUS.md, .ai/decisions/0005-harness-assisted-setup.md, .ai/decisions/README.md, README.md, docs/usage.md, src/ai_kit/adoption.py, src/ai_kit/cli.py, src/ai_kit/harness.py, src/ai_kit/menu.py, src/ai_kit/project.py, src/ai_kit/setup.py, src/ai_kit/system.py, tests/test_adoption.py, tests/test_harness.py, tests/test_menu.py, tests/test_project.py, tests/test_setup.py, tests/test_setup_cli.py, tests/test_setup_final_review.py, tests/test_setup_review.py",
   "Product code and acceptance assertions changed together in f632d64ff96e: src/ai_kit/adoption.py, src/ai_kit/cli.py, src/ai_kit/harness.py, src/ai_kit/menu.py, src/ai_kit/project.py, src/ai_kit/setup.py, src/ai_kit/system.py; tests/test_adoption.py, tests/test_harness.py, tests/test_menu.py, tests/test_project.py, tests/test_setup.py, tests/test_setup_cli.py, tests/test_setup_final_review.py, tests/test_setup_review.py",
   "Product code and acceptance assertions changed together in c64399043e0f: src/ai_kit/adoption.py, src/ai_kit/setup.py; tests/test_setup_final_review.py",
+  "Product code and acceptance assertions changed together in 6f45f36c4feb: src/ai_kit/project.py; tests/test_setup_final_review.py",
 ]
 
 [[evidence.results]]

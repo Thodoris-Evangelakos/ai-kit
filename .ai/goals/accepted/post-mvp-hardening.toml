@@ -1,7 +1,7 @@
 schema = 1
 id = "post-mvp-hardening"
 title = "Harden the existing AI Kit MVP"
-state = "IMPLEMENTED"
+state = "DONE"
 intent = "Make the existing MVP trustworthy and internally consistent as specified by the post-MVP hardening request and .ai/intent/AI-KIT-MVP.md, without expanding product scope."
 acceptance = [
   "Product intent states outcomes; a small set of ADRs explains the existing architecture without changing its direction.",
@@ -15,13 +15,14 @@ acceptance = [
 "verify" = "./dev verify"
 
 [evidence]
-commit = "c64399043e0f8d275e8537f9821c156db05c62fb"
+commit = "6f45f36c4feb7ff78a2db04702a43a2d0725eb3c"
 contract_sha256 = "631952ec09b433d6a380970e9abd4b078fbe46ef5ba022068a4a6bc7e1e95804"
 result = "pass"
 warnings = [
   "Acceptance contract and other files changed together in f632d64ff96e: .ai/current/FINDINGS.md, .ai/current/STATUS.md, .ai/decisions/0005-harness-assisted-setup.md, .ai/decisions/README.md, README.md, docs/usage.md, src/ai_kit/adoption.py, src/ai_kit/cli.py, src/ai_kit/harness.py, src/ai_kit/menu.py, src/ai_kit/project.py, src/ai_kit/setup.py, src/ai_kit/system.py, tests/test_adoption.py, tests/test_harness.py, tests/test_menu.py, tests/test_project.py, tests/test_setup.py, tests/test_setup_cli.py, tests/test_setup_final_review.py, tests/test_setup_review.py",
   "Product code and acceptance assertions changed together in f632d64ff96e: src/ai_kit/adoption.py, src/ai_kit/cli.py, src/ai_kit/harness.py, src/ai_kit/menu.py, src/ai_kit/project.py, src/ai_kit/setup.py, src/ai_kit/system.py; tests/test_adoption.py, tests/test_harness.py, tests/test_menu.py, tests/test_project.py, tests/test_setup.py, tests/test_setup_cli.py, tests/test_setup_final_review.py, tests/test_setup_review.py",
   "Product code and acceptance assertions changed together in c64399043e0f: src/ai_kit/adoption.py, src/ai_kit/setup.py; tests/test_setup_final_review.py",
+  "Product code and acceptance assertions changed together in 6f45f36c4feb: src/ai_kit/project.py; tests/test_setup_final_review.py",
 ]
 
 [[evidence.results]]
