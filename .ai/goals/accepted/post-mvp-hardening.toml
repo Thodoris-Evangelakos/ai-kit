@@ -1,7 +1,7 @@
 schema = 1
 id = "post-mvp-hardening"
 title = "Harden the existing AI Kit MVP"
-state = "IMPLEMENTED"
+state = "DONE"
 intent = "Make the existing MVP trustworthy and internally consistent as specified by the post-MVP hardening request and .ai/intent/AI-KIT-MVP.md, without expanding product scope."
 acceptance = [
   "Product intent states outcomes; a small set of ADRs explains the existing architecture without changing its direction.",
@@ -15,12 +15,11 @@ acceptance = [
 "verify" = "./dev verify"
 
 [evidence]
-commit = "97c20e4df10efa4b596e7133e8179b81722d2b8b"
+commit = "bf4c419dc87e8ad0d7874eb2273e5572b2409c71"
 contract_sha256 = "631952ec09b433d6a380970e9abd4b078fbe46ef5ba022068a4a6bc7e1e95804"
 result = "pass"
 warnings = [
-  "Acceptance contract and other files changed together in 97c20e4df10e: .ai/current/STATUS.md, src/ai_kit/system.py, tests/test_system.py",
-  "Product code and acceptance assertions changed together in 97c20e4df10e: src/ai_kit/system.py; tests/test_system.py",
+  "Product code and acceptance assertions changed together in bf4c419dc87e: src/ai_kit/cli.py, src/ai_kit/menu.py, src/ai_kit/project.py; tests/test_menu.py",
 ]
 
 [[evidence.results]]

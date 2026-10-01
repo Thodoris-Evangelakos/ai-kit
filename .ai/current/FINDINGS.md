@@ -1,6 +1,6 @@
 # Current findings
 
 - The shipped model still owns a seven-state goal lifecycle; required checks and completion evidence live in goal contracts, not a standalone `.ai/verification.toml`. [Architecture direction](../../docs/architecture-direction.md) selects native harness tasks and project-owned verification for a future model; it does not supersede accepted ADRs or implement that transition.
-- Historical DONE evidence also drives `doctor`: product changes require reopening and reverifying accepted goals. Git ancestry is required as well; squash/rebase can invalidate identical verified content. The terminal menu preserves this gate; post-mvp-hardening is reopened for fresh verification.
+- Historical DONE evidence also drives `doctor`: product changes require reopening and reverifying accepted goals. Git ancestry is required as well; squash/rebase can invalidate identical verified content. The terminal menu preserves this gate; both accepted goals now have passing evidence at bf4c419.
 - The supplied architecture context ends mid-sentence in its capability-layering section. Decisions use the complete sections; no requirements were inferred from the missing ending.
 - Profile selection edits only the modules array and refuses unfamiliar formatting (including comments inside that array) with manual-edit guidance. Sync is nontransactional: if a generated-file write fails, the saved profile stays visible so doctor/sync --check cannot conceal partial updates behind a profile-only rollback.

@@ -1,7 +1,7 @@
 schema = 1
 id = "terminal-menu"
 title = "Navigate AI Kit in the terminal"
-state = "ACTIVE"
+state = "DONE"
 intent = "Use an in-terminal selection interface to change profile modules and run common project actions without remembering their CLI commands."
 acceptance = [
   "Running ai-kit in an interactive terminal opens a keyboard-driven menu; ai-kit menu -C selects a repository, while help, existing commands, and noninteractive use remain available without hanging.",
@@ -14,3 +14,21 @@ acceptance = [
 [checks]
 "terminal" = "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -q tests/test_menu.py"
 "verify" = "./dev verify"
+
+[evidence]
+commit = "bf4c419dc87e8ad0d7874eb2273e5572b2409c71"
+contract_sha256 = "939c9df7399bb900f89fe2de46f6dd78ca4148b8c5f85b01dceb314b5aa1caf5"
+result = "pass"
+warnings = [
+  "Product code and acceptance assertions changed together in bf4c419dc87e: src/ai_kit/cli.py, src/ai_kit/menu.py, src/ai_kit/project.py; tests/test_menu.py",
+]
+
+[[evidence.results]]
+name = "terminal"
+status = "pass"
+exit_code = 0
+
+[[evidence.results]]
+name = "verify"
+status = "pass"
+exit_code = 0
