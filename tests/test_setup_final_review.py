@@ -120,6 +120,85 @@ def test_snapshot_preserves_staged_and_dirty_work(tmp_path: Path, committed: boo
     assert source.read_text() == "VALUE = 3\n"
 
 
+@pytest.mark.parametrize("mode", [0o700, 0o755])
+def test_existing_executable_dev_permissions_are_preserved(tmp_path: Path, mode: int) -> None:
+    root = repo(tmp_path)
+    write_dev(root, mode=mode)
+    commit(root)
+    prepare_setup(root)
+    write_report(root)
+    (root / "dev").chmod(0o777)
+
+    with pytest.raises(SetupError, match="mode|permissions"):
+        finalize_setup(root)
+    assert setup_status(root) == "pending"
+
+
+def test_nonexecutable_dev_may_gain_execute_permission(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    write_dev(root, mode=0o640)
+    prepare_setup(root)
+    (root / "dev").chmod(0o740)
+    write_report(root)
+
+    finalize_setup(root)
+    assert setup_status(root) == "completed"
+
+
+@pytest.mark.parametrize("resume", [False, True])
+def test_integration_rejects_symlinked_directory_targets(tmp_path: Path, resume: bool) -> None:
+    root = repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if resume:
+        prepare_setup(root)
+        directory = root / ".ai/current"
+        directory.rename(root / ".ai-local/current-preserved")
+    else:
+        (root / ".ai").mkdir()
+        directory = root / ".ai/goals"
+    directory.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(SetupError, match="symlink"):
+        prepare_setup(root)
+    assert list(outside.iterdir()) == []
+
+
+def test_split_index_snapshot_is_self_contained(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    write_dev(root)
+    source = root / "app.py"
+    source.write_text("VALUE = 1\n")
+    commit(root)
+    source.write_text("VALUE = 2\n")
+    git(root, "add", ".")
+    git(root, "update-index", "--split-index")
+    original_index = git(root, "ls-files", "--stage")
+
+    prepare_setup(root)
+    snapshot = root / ".ai-local/setup/original"
+    assert git(snapshot, "ls-files", "--stage") == original_index
+    write_report(root)
+    finalize_setup(root)
+    assert setup_status(root) == "completed"
+    assert git(root, "ls-files", "--stage") == original_index
+
+
+def test_skipped_checks_cannot_hide_behind_truncated_logs(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    write_dev(
+        root,
+        f"#!{sys.executable}\nprint('1 passed, 1 skipped in 0.01s')\nprint('x' * 5000)\n",
+    )
+    commit(root)
+    prepare_setup(root)
+    write_report(root)
+
+    with pytest.raises(SetupError, match="skipped|unknown"):
+        finalize_setup(root)
+    assert setup_status(root) == "pending"
+
+
 @pytest.mark.parametrize("tamper", ["replace", "remove", "append"])
 def test_inherited_failure_cannot_be_replaced_or_removed(tmp_path: Path, tamper: str) -> None:
     import json

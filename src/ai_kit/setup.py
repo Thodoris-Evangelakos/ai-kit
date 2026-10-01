@@ -297,7 +297,9 @@ def _install_snapshot_git_metadata(root: Path, snapshot: Path) -> None:
     objects = repository.git_dir / "objects"
     if objects.is_dir():
         shutil.copytree(objects, destination / "objects", dirs_exist_ok=True)
-    for name in ("HEAD", "index", "MERGE_HEAD", "CHERRY_PICK_HEAD", "ORIG_HEAD", "packed-refs"):
+    names = ("HEAD", "index", "MERGE_HEAD", "CHERRY_PICK_HEAD", "ORIG_HEAD", "packed-refs")
+    names += tuple(path.name for path in repository.git_dir.glob("sharedindex.*"))
+    for name in names:
         source = repository.git_dir / name
         if source.is_file() and not source.is_symlink():
             shutil.copy2(source, destination / name)
@@ -594,6 +596,8 @@ def _configure_blocks(root: Path, lock, modules: tuple[str, ...]) -> tuple[dict[
 
 
 def _integrate(root: Path, lock, modules: tuple[str, ...]) -> tuple[dict[str, str], bool]:
+    for relative in _integration_write_paths(root, lock):
+        _assert_no_symlink_prefix(root, relative)
     for directory in (
         ".ai",
         ".ai/current",
@@ -605,7 +609,7 @@ def _integrate(root: Path, lock, modules: tuple[str, ...]) -> tuple[dict[str, st
         ".ai-local",
         ".ai-local/learning",
     ):
-        (root / directory).mkdir(parents=True, exist_ok=True)
+        _assert_no_symlink_prefix(root, directory).mkdir(parents=True, exist_ok=True)
     module_list = ", ".join(f'"{name}"' for name in modules)
     _write_if_absent(
         root, ".ai/profile.toml", f'schema = 1\nbase = "software"\nmodules = [{module_list}]\n'
@@ -1075,9 +1079,13 @@ def _dev_failures(root: Path, entries: list[dict[str, object]]) -> list[str]:
         return []
     if path.is_symlink() or not path.is_file():
         return ["inherited dev was removed or replaced by a non-file"]
-    executable = bool(int(str(original.get("mode", "0")), 8) & 0o111)
-    if executable and not os.access(path, os.X_OK):
-        return ["inherited executable dev lost its executable mode"]
+    original_mode = int(str(original.get("mode", "0")), 8)
+    current_mode = stat.S_IMODE(path.stat().st_mode)
+    if original_mode & 0o111:
+        if current_mode != original_mode:
+            return ["inherited executable dev mode changed from the original"]
+    elif current_mode & ~0o111 != original_mode:
+        return ["inherited dev permissions changed beyond adding execute permission"]
     return []
 
 

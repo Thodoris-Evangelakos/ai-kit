@@ -316,29 +316,35 @@ def _run_check(root: Path, command: tuple[str, ...], timeout: float) -> CheckRes
                 exit_code = None
                 reason = f"Timed out after {timeout:g} seconds"
                 status = "unknown"
+            # Classify all diagnostics; the tail below is only stored evidence.
             size = output.tell()
+            counts: dict[str, int] = {}
+            skipped = False
+            output.seek(0)
+            while output.tell() < size:
+                raw_line = output.readline(size - output.tell())
+                if not raw_line:
+                    break
+                line = raw_line.decode("utf-8", errors="replace")
+                if command[1:3] == ("-m", "pytest") and " in " in line:
+                    reported = {
+                        kind: int(count)
+                        for count, kind in re.findall(
+                            r"(\d+) (passed|failed|skipped|xfailed)", line
+                        )
+                    }
+                    if reported:
+                        counts = reported
+                if re.search(r"\b[1-9]\d* (?:skipped|xfailed)\b|(?m:^# skip [1-9]\d*\b)", line):
+                    skipped = True
             output.seek(max(0, size - 4000))
             summary = output.read().decode("utf-8", errors="replace")
             if size > 4000:
                 summary = "[earlier output truncated]\n" + summary
-            counts: dict[str, int] = {}
-            if command[1:3] == ("-m", "pytest"):
-                for line in reversed(summary.splitlines()):
-                    if " in " in line:
-                        counts = {
-                            kind: int(count)
-                            for count, kind in re.findall(
-                                r"(\d+) (passed|failed|skipped|xfailed)", line
-                            )
-                        }
-                        if counts:
-                            break
-                if status == "pass" and (counts.get("skipped", 0) or counts.get("xfailed", 0)):
-                    status = "unknown"
-                    reason = "Pytest reported skipped or expected-failure tests"
-            if status == "pass" and re.search(
-                r"\b[1-9]\d* skipped\b|(?m:^# skip [1-9]\d*\b)", summary
-            ):
+            if status == "pass" and (counts.get("skipped", 0) or counts.get("xfailed", 0)):
+                status = "unknown"
+                reason = "Pytest reported skipped or expected-failure tests"
+            if status == "pass" and skipped:
                 status = "unknown"
                 reason = "Check output reports skipped tests"
             return CheckResult(status, command, exit_code, summary, reason, counts)
