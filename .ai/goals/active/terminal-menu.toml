@@ -1,0 +1,16 @@
+schema = 1
+id = "terminal-menu"
+title = "Navigate AI Kit in the terminal"
+state = "READY"
+intent = "Use an in-terminal selection interface to change profile modules and run common project actions without remembering their CLI commands."
+acceptance = [
+  "Running ai-kit in an interactive terminal opens a keyboard-driven menu; ai-kit menu -C selects a repository, while help, existing commands, and noninteractive use remain available without hanging.",
+  "The menu shows the repository and active modules, supports arrow keys, space to toggle modules, Enter to apply, and cancellation without changes.",
+  "Applying profile modules updates the profile and generated files through existing safety checks; manual edits and symlinks are preserved or rejected with an actionable error, and sync --check is clean after success.",
+  "Menu actions provide goal status, doctor, managed-file sync, and project check/verify with visible output and honest failures, returning to the menu afterward.",
+  "Documentation explains starting, navigating, applying, and exiting the menu; automated checks and a real PTY exercise selection, persistence, cancellation, actions, and terminal restoration.",
+]
+
+[checks]
+"terminal" = "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -q tests/test_menu.py"
+"verify" = "./dev verify"
