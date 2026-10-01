@@ -516,6 +516,7 @@ def load_lock(root: Path) -> Lock:
         raw_blocks = data.get("blocks", {})
         if not isinstance(raw_blocks, dict) or any(
             not isinstance(key, str)
+            or key not in BLOCK_PATHS
             or not isinstance(value, str)
             or not re.fullmatch(r"sha256:[0-9a-f]{64}", value)
             for key, value in raw_blocks.items()

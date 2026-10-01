@@ -199,6 +199,34 @@ def test_skipped_checks_cannot_hide_behind_truncated_logs(tmp_path: Path) -> Non
     assert setup_status(root) == "pending"
 
 
+def test_lock_cannot_promote_source_to_managed_instructions(tmp_path: Path) -> None:
+    from ai_kit.project import _lock_text, block_content, load_lock, load_profile, managed_block
+    from ai_kit.system import sha256_text
+
+    root = repo(tmp_path)
+    write_dev(root)
+    source = root / "app.py"
+    source.write_text("VALUE = 1\n")
+    commit(root)
+    prepare_setup(root)
+    write_report(root)
+    block = managed_block(block_content("app.py", load_profile(root), setup=True))
+    source.write_text(block + "VALUE = 2\n")
+    lock = load_lock(root)
+    (root / "ai-kit.lock").write_text(
+        _lock_text(
+            lock.profile_digest,
+            lock.generated,
+            blocks={**lock.blocks, "app.py": sha256_text(block)},
+            setup=lock.setup,
+            schema=lock.schema,
+        )
+    )
+
+    with pytest.raises(SetupError, match="block|protected"):
+        finalize_setup(root)
+
+
 @pytest.mark.parametrize("tamper", ["replace", "remove", "append"])
 def test_inherited_failure_cannot_be_replaced_or_removed(tmp_path: Path, tamper: str) -> None:
     import json

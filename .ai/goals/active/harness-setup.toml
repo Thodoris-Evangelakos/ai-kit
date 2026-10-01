@@ -14,3 +14,17 @@ acceptance = [
 
 [checks]
 "verify" = "./dev verify"
+
+[evidence]
+commit = "c64399043e0f8d275e8537f9821c156db05c62fb"
+contract_sha256 = "d995ff5531e4a2a0096e8a67313d42b40e42b7921c4cc49c2417b9ee20b2e57b"
+result = "pass"
+warnings = [
+  "Product code and acceptance assertions changed together in f632d64ff96e: src/ai_kit/adoption.py, src/ai_kit/cli.py, src/ai_kit/harness.py, src/ai_kit/menu.py, src/ai_kit/project.py, src/ai_kit/setup.py, src/ai_kit/system.py; tests/test_adoption.py, tests/test_harness.py, tests/test_menu.py, tests/test_project.py, tests/test_setup.py, tests/test_setup_cli.py, tests/test_setup_final_review.py, tests/test_setup_review.py",
+  "Product code and acceptance assertions changed together in c64399043e0f: src/ai_kit/adoption.py, src/ai_kit/setup.py; tests/test_setup_final_review.py",
+]
+
+[[evidence.results]]
+name = "verify"
+status = "pass"
+exit_code = 0
