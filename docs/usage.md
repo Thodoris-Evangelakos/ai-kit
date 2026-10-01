@@ -58,6 +58,44 @@ ai-kit sync                              # regenerate managed files
 ai-kit sync --check                      # report drift; nonzero on drift
 ```
 
+## Terminal menu
+
+Running `ai-kit` with no arguments at a Git repository root in an interactive terminal opens a
+keyboard-driven menu; in a pipe or CI job the same command prints help instead
+of waiting for input. Open it explicitly, or target another repository, with:
+
+```sh
+ai-kit menu
+ai-kit menu -C /path/to/repo
+```
+
+The main screen lists the repository, its enabled modules, and these actions:
+Profile modules, Goal status, Doctor, Sync managed files, Run `./dev check`, Run
+`./dev verify`, and Exit. Move with the arrow keys or `j`/`k`, press Enter to
+choose, and press `q`, Esc, Ctrl-C, or Ctrl-D to leave.
+
+Profile modules shows every supported module with a checkbox. Space toggles the
+highlighted module, Enter applies the selection, and Esc or `q` cancels without
+changing anything. Modules that are currently declarative only are labelled,
+and the footer explains the effect of `strict-verification` (every goal
+contract needs a `verify` check) and `webapp` (every goal contract needs
+`acceptance` and `runtime_errors` checks). Applying rewrites only the `modules`
+array, keeps comments and other formatting, regenerates managed files and
+`ai-kit.lock` through the usual safety checks, and treats an unchanged
+selection as a no-op. Manual drift, symlinks, or unmanaged files block the
+change before the profile is touched.
+
+Unfamiliar formatting, including comments inside the modules array, is left
+untouched with guidance for editing it manually. If a write fails during sync,
+saved modules and any partial updates remain visible; inspect `ai-kit doctor`
+and `ai-kit sync --check` before retrying.
+
+Every action restores the terminal first, runs the real command, prints its
+output and true exit status, and waits for Enter before returning to the menu;
+nonzero results are reported as failures. The menu needs a real TTY and a
+capable `TERM`; otherwise it fails with a clear message and never hangs, and a
+window that is too small shows a resize prompt instead of a broken screen.
+
 ## Goal verification
 
 ```sh

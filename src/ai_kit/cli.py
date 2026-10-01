@@ -13,7 +13,7 @@ from .project import ProjectError, doctor_project, init_project, preflight_adopt
 from .verification import FailureClass, classify_check
 
 app = typer.Typer(
-    help="Make a repository legible, reproducible, and verifiable.", no_args_is_help=True
+    help="Make a repository legible, reproducible, and verifiable.", no_args_is_help=False
 )
 goal_app = typer.Typer(help="Manage acceptance contracts and their verification evidence.")
 baseline_app = typer.Typer(help="Compare an adopted repository with its measured source baseline.")
@@ -28,6 +28,15 @@ def _fail(message: str, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
+def _open_menu(path: Path) -> None:
+    from .menu import MenuError, run_menu
+
+    try:
+        run_menu(path)
+    except MenuError as exc:
+        _fail(str(exc))
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
@@ -37,7 +46,21 @@ def main(
         out.print(__version__)
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
-        out.print(ctx.get_help())
+        from .menu import interactive_ready
+
+        if interactive_ready():
+            _open_menu(Path("."))
+        else:
+            out.print(ctx.get_help())
+
+
+@app.command()
+def menu(
+    path: Path = typer.Option(Path("."), "--path", "-C", help="Git repository root."),
+) -> None:
+    """Open the keyboard-driven terminal menu."""
+
+    _open_menu(path)
 
 
 @app.command("version")

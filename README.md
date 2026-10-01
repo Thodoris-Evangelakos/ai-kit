@@ -35,6 +35,16 @@ Use `--module learning`, `--module webapp`, or `--module professional-repository
 
 `sync` regenerates managed files from the profile. It checks hashes in `ai-kit.lock` and refuses to overwrite manual edits. `sync --check` and `doctor` return nonzero for drift or invalid state. Profile comments and formatting are left alone.
 
+## Terminal menu
+
+Running `ai-kit` with no arguments at a Git repository root inside an interactive terminal opens a keyboard-driven menu. It only starts when stdin and stdout are real terminals; a pipe, redirect, or CI job gets the help text instead of a blocked process. `ai-kit menu` opens it explicitly, and `-C`/`--path` targets another repository: `ai-kit menu -C /path/to/repo`.
+
+The main screen shows the repository and enabled modules, then offers Profile modules, Goal status, Doctor, Sync managed files, Run `./dev check`, Run `./dev verify`, and Exit. Move with the arrow keys (or `j`/`k`), select with Enter, and leave with `q`, Esc, Ctrl-C, or Ctrl-D.
+
+Profile modules opens a checklist of every supported module. Space toggles the highlighted module, Enter applies the selection, and Esc or `q` cancels without changing anything. Modules whose behavior is still declarative are labelled so a choice is not misleading, and the footer explains the current effect of `strict-verification` (a `verify` check in every goal contract) and `webapp` (acceptance and runtime-error checks). Applying re-renders managed files and the lock through the same safety checks as `sync`: comments and non-module formatting are preserved, selecting the current set is a no-op, and manual drift, symlinks, or unmanaged collisions are refused before anything is written.
+
+Each action restores the terminal, runs the real command, prints its output and true exit status, and waits for Enter before returning to the menu. A failed command is shown as failed rather than passed. On a terminal that is too small, or when `TERM` is `dumb` or unset, the menu shows a clear message instead of a broken screen.
+
 ## Goals
 
 ```sh

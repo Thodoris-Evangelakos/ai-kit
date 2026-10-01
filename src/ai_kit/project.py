@@ -14,19 +14,19 @@ from .system import GitRepository, UnsafeWriteError, atomic_write_text, sha256_f
 PROFILE_SCHEMA = 1
 LOCK_SCHEMA = 1
 ADAPTER_SCHEMA = 1
-MODULES = frozenset(
-    {
-        "learning",
-        "professional-repository",
-        "strict-verification",
-        "webapp",
-        "production",
-        "public-oss",
-        "research",
-        "experimental",
-        "security-sensitive",
-    }
+# Deterministic order used whenever AI Kit rewrites the profile.
+MODULE_ORDER = (
+    "strict-verification",
+    "learning",
+    "webapp",
+    "professional-repository",
+    "production",
+    "public-oss",
+    "research",
+    "experimental",
+    "security-sensitive",
 )
+MODULES = frozenset(MODULE_ORDER)
 
 
 class ProjectError(RuntimeError):
@@ -188,9 +188,113 @@ def _profile_text(modules: tuple[str, ...]) -> str:
     return f'schema = 1\nbase = "software"\nmodules = [{values}]\n'
 
 
+_MODULES_ASSIGNMENT = re.compile(
+    r"""^(?P<indent>[ \t]*)(?:modules|"modules"|'modules')[ \t]*=[ \t]*(?P<value>.*)$""",
+    re.MULTILINE,
+)
+_REFUSAL = (
+    "refusing to rewrite unfamiliar .ai/profile.toml; edit its modules manually and run ai-kit sync"
+)
+
+
+def _scan_toml_array(text: str, start: int) -> tuple[int, bool]:
+    """Return the index of the ``]`` closing the array and whether it holds comments."""
+
+    depth = 0
+    index = start
+    in_basic = False
+    in_literal = False
+    escaped = False
+    in_comment = False
+    has_comment = False
+    while index < len(text):
+        character = text[index]
+        if in_comment:
+            if character == "\n":
+                in_comment = False
+            index += 1
+            continue
+        if in_basic:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_basic = False
+            index += 1
+            continue
+        if in_literal:
+            if character == "'":
+                in_literal = False
+            index += 1
+            continue
+        if character == '"':
+            in_basic = True
+        elif character == "'":
+            in_literal = True
+        elif character == "#":
+            in_comment = True
+            has_comment = True
+        elif character == "[":
+            depth += 1
+        elif character == "]":
+            depth -= 1
+            if depth == 0:
+                return index, has_comment
+        index += 1
+    raise ProjectError(f"{_REFUSAL}: unterminated modules array")
+
+
+def _array_indent(inner: str, close_indent: str) -> str:
+    for line in inner.split("\n")[1:]:
+        if line.strip():
+            return line[: len(line) - len(line.lstrip(" \t"))]
+    return close_indent + "    "
+
+
+def _render_modules(
+    modules: tuple[str, ...], *, indent: str, close_indent: str, trailing: bool
+) -> str:
+    if not modules:
+        return "\n" + close_indent
+    body = ",\n".join(f'{indent}"{name}"' for name in modules)
+    if trailing:
+        body += ","
+    return "\n" + body + "\n" + close_indent
+
+
+def _replace_profile_modules(text: str, modules: tuple[str, ...]) -> str:
+    """Rewrite only the ``modules`` array, refusing formatting we cannot preserve."""
+
+    matches = list(_MODULES_ASSIGNMENT.finditer(text))
+    if len(matches) != 1 or not matches[0].group("value").startswith("["):
+        raise ProjectError(f"{_REFUSAL}: expected a single modules = [...] assignment")
+    start = matches[0].start("value")
+    close, has_comment = _scan_toml_array(text, start)
+    if has_comment:
+        raise ProjectError(f"{_REFUSAL}: comments inside the modules array")
+    line_end = text.find("\n", close)
+    line_end = len(text) if line_end == -1 else line_end
+    tail = text[close + 1 : line_end].strip()
+    if tail and not tail.startswith("#"):
+        raise ProjectError(f"{_REFUSAL}: unexpected text after the modules array")
+    inner = text[start + 1 : close]
+    if "\n" in text[start:close]:
+        close_indent = text[text.rfind("\n", 0, close) + 1 : close]
+        rendered = _render_modules(
+            modules,
+            indent=_array_indent(inner, close_indent),
+            close_indent=close_indent,
+            trailing=inner.rstrip().endswith(","),
+        )
+    else:
+        rendered = ", ".join(f'"{name}"' for name in modules)
+    return text[:start] + "[" + rendered + text[close:]
+
+
 def load_profile(root: Path) -> Profile:
     path = root / ".ai/profile.toml"
-    if path.is_symlink():
+    if (root / ".ai").is_symlink() or path.is_symlink():
         raise ProjectError(f"refusing symlinked profile: {path}")
     try:
         data = tomllib.loads(path.read_text())
@@ -317,21 +421,30 @@ def _sync_plan(root: Path, rendered: dict[str, str], lock: Lock | None) -> SyncR
     return SyncResult(tuple(changes), tuple(problems))
 
 
+def _local_sync_plan(root: Path, modules: tuple[str, ...]) -> SyncResult:
+    """Plan for the ignored ``.ai-local`` area, shared by sync and the profile menu."""
+
+    changes: list[str] = []
+    problems: list[str] = []
+    if (root / ".ai-local").is_symlink():
+        problems.append("symlinked .ai-local path")
+    learning = root / ".ai-local/learning"
+    if "learning" in modules and (not learning.is_dir() or learning.is_symlink()):
+        if learning.exists() or learning.is_symlink():
+            problems.append("invalid .ai-local/learning path")
+        else:
+            changes.append("create .ai-local/learning")
+    return SyncResult(tuple(changes), tuple(problems))
+
+
 def sync_project(root: Path, *, check: bool = False) -> SyncResult:
     root = _root(root)
     profile = load_profile(root)
     lock = load_lock(root)
     rendered = render_codex(profile)
     plan = _sync_plan(root, rendered, lock)
-    local = root / ".ai-local"
-    if local.is_symlink():
-        plan = SyncResult(plan.changes, (*plan.problems, "symlinked .ai-local path"))
-    learning = root / ".ai-local/learning"
-    if "learning" in profile.modules and (not learning.is_dir() or learning.is_symlink()):
-        if learning.exists() or learning.is_symlink():
-            plan = SyncResult(plan.changes, (*plan.problems, "invalid .ai-local/learning path"))
-        else:
-            plan = SyncResult((*plan.changes, "create .ai-local/learning"), plan.problems)
+    local = _local_sync_plan(root, profile.modules)
+    plan = SyncResult((*plan.changes, *local.changes), (*plan.problems, *local.problems))
     profile_digest = sha256_file(root / ".ai/profile.toml")
     desired_lock = _lock_text(
         profile_digest, {path: sha256_text(content) for path, content in rendered.items()}
@@ -343,7 +456,7 @@ def sync_project(root: Path, *, check: bool = False) -> SyncResult:
     if check or plan.problems:
         return plan
     if "learning" in profile.modules:
-        learning.mkdir(parents=True, exist_ok=True)
+        (root / ".ai-local/learning").mkdir(parents=True, exist_ok=True)
     for relative in sorted(set(lock.generated) | set(rendered)):
         path = _managed_path(root, relative)
         if relative not in rendered:
@@ -358,6 +471,66 @@ def sync_project(root: Path, *, check: bool = False) -> SyncResult:
     lock_path = root / "ai-kit.lock"
     atomic_write_text(lock_path, desired_lock, expected_content=lock_path.read_text())
     return SyncResult(plan.changes, ())
+
+
+def _restore_profile(path: Path, original: str, written: str) -> None:
+    try:
+        atomic_write_text(path, original, expected_content=written)
+    except (UnsafeWriteError, OSError) as exc:  # pragma: no cover - defensive
+        raise ProjectError(
+            f"profile change was rejected and {path} could not be restored: {exc}"
+        ) from exc
+
+
+def set_profile_modules(root: Path, modules: tuple[str, ...] | list[str]) -> SyncResult:
+    """Replace the profile's modules and regenerate managed files safely.
+
+    The profile keeps human comments and non-module formatting: only the
+    ``modules`` array is rewritten, and unfamiliar formatting is refused rather
+    than clobbered. Selecting the current module set is a no-op.
+    """
+
+    root = _root(root)
+    wanted = tuple(modules)
+    requested = set(wanted)
+    if len(requested) != len(wanted) or requested - MODULES:
+        raise ProjectError(f"duplicate or unsupported modules: {wanted!r}")
+    profile = load_profile(root)
+    if requested == set(profile.modules):
+        return SyncResult((), ())
+    ordered = tuple(name for name in MODULE_ORDER if name in requested)
+    path = root / ".ai/profile.toml"
+    original = path.read_text()
+    updated = _replace_profile_modules(original, ordered)
+    try:
+        data = tomllib.loads(updated)
+    except tomllib.TOMLDecodeError as exc:
+        raise ProjectError(f"{_REFUSAL}: {exc}") from exc
+    if data != {"schema": PROFILE_SCHEMA, "base": "software", "modules": list(ordered)}:
+        raise ProjectError(f"{_REFUSAL}: the rewritten module list does not match the selection")
+    lock = load_lock(root)
+    candidate = render_codex(Profile(PROFILE_SCHEMA, "software", ordered))
+    plan = _sync_plan(root, candidate, lock)
+    local = _local_sync_plan(root, ordered)
+    problems = (*plan.problems, *local.problems)
+    if problems:
+        raise ProjectError("profile modules were not applied: " + "; ".join(problems))
+    try:
+        atomic_write_text(path, updated, expected_content=original)
+    except (UnsafeWriteError, OSError) as exc:
+        raise ProjectError(f"profile modules were not applied: {exc}") from exc
+    try:
+        result = sync_project(root)
+    except (ProjectError, OSError, UnsafeWriteError, ValueError) as exc:
+        # ponytail: sync is nontransactional; add guarded file rollback if atomic sync is needed.
+        raise ProjectError(
+            "profile saved, but sync may be partially applied: "
+            f"{exc}. Inspect changes with ai-kit doctor and sync --check before retrying."
+        ) from exc
+    if result.problems:
+        _restore_profile(path, original, updated)
+        raise ProjectError("profile modules were not applied: " + "; ".join(result.problems))
+    return result
 
 
 def _create(path: Path, content: str) -> bool:
