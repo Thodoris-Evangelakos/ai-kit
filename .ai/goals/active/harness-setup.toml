@@ -1,0 +1,16 @@
+schema = 1
+id = "harness-setup"
+title = "Set up repositories with a preferred harness"
+state = "READY"
+intent = "Prepare and resume safe repository integration, configure it through an interactive preferred harness, and finalize only with independent preservation and verification evidence."
+acceptance = [
+  "The menu and CLI persist a user-wide preference for Codex, codex_ds, OpenCode, or Claude Code, cancel without changes, show availability, and launch interactively with inherited permissions.",
+  "Setup prepares or resumes a pending integration for new, unmanaged, and managed repositories; existing init and safe adoption remain available.",
+  "Custom instructions and context, dirty and untracked work, file modes, and protected source are preserved; managed instruction drift and unsafe paths fail safely.",
+  "All harnesses receive one setup protocol; structured reports and runnable checks are validated independently, and interruption, failures, unknown results, or missing evidence cannot finalize.",
+  "Newly discovered baseline commands are measured against the captured original repository; existing failures cannot be replaced by optimistic evidence.",
+  "PTY and executable-stub tests cover preference selection, cancellation, four launcher paths, resume, and terminal restoration; documentation and existing verification remain coherent.",
+]
+
+[checks]
+"verify" = "./dev verify"
