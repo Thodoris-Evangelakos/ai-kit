@@ -4,6 +4,8 @@ AI Kit makes a repository legible, reproducible, and verifiable to a fresh codin
 
 The MVP is Linux first, Python 3.11+, and Codex focused. It uses Git for history and project-owned commands for verification. It has no daemon, web UI, or service dependency.
 
+See [docs/usage.md](docs/usage.md) for a concise guide to installing, initializing, setting up a project, verifying goals, and adopting an existing repository.
+
 ## Install and develop
 
 ```sh
@@ -20,12 +22,14 @@ An editable global development install is also possible with `uv tool install --
 Run these commands at a Git repository root:
 
 ```sh
-ai-kit init
+ai-kit init        # targets the current working directory
+ai-kit init .      # identical: explicit current directory
+ai-kit init -C .   # identical: option form, still supported
 ai-kit doctor
 ai-kit sync --check
 ```
 
-`init` creates a small `AGENTS.md`, `.ai/profile.toml`, current-state files, two Codex skills, `ai-kit.lock`, an ignored `.ai-local/` area, and a `./dev` starter. Replace the starter's failing `setup`, `check`, and `verify` commands with real commands for that project before claiming completion. The `dev` file is project-owned; AI Kit does not regenerate it.
+`init` targets the current working directory by default; `--path` / `-C` remain compatible for targeting another path. The resolved target must be a Git repository root. It creates a small `AGENTS.md`, `.ai/profile.toml`, current-state files, two Codex skills, `ai-kit.lock`, an ignored `.ai-local/` area, and a `./dev` starter. Replace the starter's failing `setup`, `check`, and `verify` commands with real commands for that project before claiming completion. The `dev` file is project-owned; AI Kit does not regenerate it.
 
 Use `--module learning`, `--module webapp`, or `--module professional-repository` to enable optional behavior. The professional module renders a GitHub Actions workflow that calls `./dev setup` then `./dev verify`. Full verification includes `./dev check`, which remains the fast local feedback command. The webapp module provides a focused browser-verification skill; the project must provide its actual Playwright acceptance command.
 

@@ -152,3 +152,30 @@ def test_safe_adoption_preflights_human_router(tmp_path: Path) -> None:
     assert "overwrite user work" in cli(root, "adopt", "--safe", exit_code=1)
     assert (root / "AGENTS.md").read_text() == "human instructions\n"
     assert not (root / ".ai").exists()
+
+
+def test_init_targets_cwd_and_keeps_path_flags(tmp_path: Path) -> None:
+    root = tmp_path / "greenfield"
+    root.mkdir()
+    git(root, "init", "-q", "-b", "main")
+
+    # Positional form targets the current working directory.
+    assert "AI Kit initialized." in cli(root, "init", ".")
+    assert (root / "ai-kit.lock").is_file()
+
+    # Bare `init` and `init .` target the same CWD and behave identically.
+    assert cli(root, "init") == cli(root, "init", ".")
+    assert "AI Kit already current." in cli(root, "init")
+
+    # `--path` / `-C` remain compatible and still select an explicit root.
+    other = tmp_path / "explicit"
+    other.mkdir()
+    git(other, "init", "-q", "-b", "main")
+    cli(root, "init", "-C", str(other))
+    cli(root, "init", "--path", str(other))
+    assert (other / "ai-kit.lock").is_file()
+
+    # The target must still be a Git repository root.
+    nested = root / "nested"
+    nested.mkdir()
+    assert "is not a Git" in cli(root, "init", str(nested), exit_code=1)

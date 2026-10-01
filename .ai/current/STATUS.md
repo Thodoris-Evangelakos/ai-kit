@@ -1,7 +1,7 @@
 # Current status
 
-Goal: post-mvp-hardening
-State: DONE
-Completed: outcome-only intent and ADRs 0001–0004; pinned, deduplicated CI with full history; accurate tracking-branch status; 64 tests, sync, doctor, and commit-bound goal completion pass. [PR #1](https://github.com/Thodoris-Evangelakos/ai-kit/pull/1) has [successful remote setup and verification](https://github.com/Thodoris-Evangelakos/ai-kit/actions/runs/36321569200) for the implementation commit.
-Remaining: the webapp/browser acceptance and runtime-error verification vertical slice is next; not started. Aggressive adoption and other adapters remain deferred.
+Goal: architecture assessment from the supplied context
+State: ASSESSED
+Completed: repository investigation, inherited-edit review, independent architectural review, and source/link audit; chosen next-model direction in [docs/architecture-direction.md](../../docs/architecture-direction.md). ./dev check passes with 65 tests. ./dev verify exits 1 because pre-existing product/docs edits invalidate historical post-mvp-hardening DONE evidence; managed sync and lock validation pass.
+Remaining: implementation of the selected slices, beginning with standalone project verification. Native-task integration, flexible context, adoption bootstrap, upgrades, and browser/runtime acceptance are unimplemented; accepted ADRs 0001–0004 still describe the shipped model.
 Blocked: no

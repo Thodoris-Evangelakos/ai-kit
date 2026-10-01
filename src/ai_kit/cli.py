@@ -49,13 +49,17 @@ def version_command() -> None:
 
 @app.command()
 def init(
+    target: Path | None = typer.Argument(
+        None, help="Git repository root; defaults to the current directory."
+    ),
     path: Path = typer.Option(Path("."), "--path", "-C", help="Git repository root."),
     module: list[str] | None = typer.Option(None, "--module", help="Enable a profile module."),
 ) -> None:
     """Initialize a safe, minimal AI Kit project."""
 
+    root = target if target is not None else path
     try:
-        result = init_project(path, modules=tuple(module) if module else ("strict-verification",))
+        result = init_project(root, modules=tuple(module) if module else ("strict-verification",))
     except (ProjectError, OSError, ValueError) as exc:
         _fail(str(exc))
     for change in result.changes:
