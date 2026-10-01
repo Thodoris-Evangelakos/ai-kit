@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 from ai_kit import __version__
-from ai_kit.system import GitRepository, UnsafeWriteError, atomic_write_text
+from ai_kit.system import GitRepository, GitStatus, UnsafeWriteError, atomic_write_text
 
 EvidenceState = Literal["CLAIMED", "OBSERVED", "INFERRED", "UNKNOWN"]
 CheckStatus = Literal["pass", "fail", "unknown"]
@@ -344,11 +344,14 @@ def _run_check(root: Path, command: tuple[str, ...], timeout: float) -> CheckRes
             return CheckResult(status, command, exit_code, summary, reason, counts)
 
 
-def adopt_safe(root: Path, *, timeout: float = 60) -> AdoptionResult:
+def adopt_safe(
+    root: Path, *, timeout: float = 60, original_source: GitStatus | None = None
+) -> AdoptionResult:
     """Inspect and baseline a Git repo without running checks in its worktree.
 
     Only new AI Kit adoption artifacts are written. Existing artifacts are never
     overwritten; a failed or unavailable check remains failed or unknown.
+    Setup supplies the status captured before its private snapshot writes.
     """
 
     if timeout <= 0:
@@ -365,6 +368,9 @@ def adopt_safe(root: Path, *, timeout: float = 60) -> AdoptionResult:
     source = repository.status()
     if source.head is None:
         raise ValueError("adoption requires an existing Git commit; use init for a new repository")
+    original_source = original_source or source
+    if original_source.head != source.head:
+        raise RuntimeError("repository HEAD changed before adoption")
 
     ai = root / ".ai"
     adoption = ai / "adoption"
@@ -378,7 +384,7 @@ def adopt_safe(root: Path, *, timeout: float = 60) -> AdoptionResult:
     for path in (baseline_path, custody_path, inventory_path):
         _check_target(path)
 
-    evidence = _inventory(root, source.head, source.is_dirty)
+    evidence = _inventory(root, source.head, original_source.is_dirty)
     name, command, description = _command(root)
     check = (
         _run_check(root, command, timeout)
@@ -402,8 +408,10 @@ def adopt_safe(root: Path, *, timeout: float = 60) -> AdoptionResult:
         "schema": 1,
         "commit": source.head,
         "source": {
-            "dirty": source.is_dirty,
-            "changes": [{"status": item.status, "path": item.path} for item in source.entries],
+            "dirty": original_source.is_dirty,
+            "changes": [
+                {"status": item.status, "path": item.path} for item in original_source.entries
+            ],
         },
         "status": status,
         "checks": {name: asdict(check)},
@@ -518,11 +526,35 @@ def recheck_baseline(root: Path, *, timeout: float = 60) -> BaselineComparison:
     raw_checks = baseline.get("checks")
     if not isinstance(raw_checks, dict) or not all(isinstance(name, str) for name in raw_checks):
         raise ValueError(f"invalid adoption checks: {path}")
-    before = {name: _stored_check(value) for name, value in raw_checks.items()}
+    # An originally unknown obligation that setup resolved through a concrete
+    # discovered command is superseded by that command, not re-reported unknown.
+    superseded = {
+        value["resolves"]
+        for value in raw_checks.values()
+        if isinstance(value, dict)
+        and value.get("discovery") is True
+        and isinstance(value.get("resolves"), str)
+        and isinstance(raw_checks.get(value["resolves"]), dict)
+        and raw_checks[value["resolves"]].get("status") == "unknown"
+        and raw_checks[value["resolves"]].get("command") is None
+    }
+    before = {
+        name: _stored_check(value) for name, value in raw_checks.items() if name not in superseded
+    }
+    # Setup-discovered baseline checks are recorded with an explicit marker so
+    # they survive as evidence instead of silently disappearing at recheck time.
+    discovered = {
+        name
+        for name, value in raw_checks.items()
+        if isinstance(value, dict) and value.get("discovery") is True
+    }
     source = repository.status()
     current = {}
     for name, check in before.items():
-        if check.command is None or not _recognized_check(root, check.command):
+        recognized = check.command is not None and (
+            _recognized_check(root, check.command) or name in discovered
+        )
+        if not recognized:
             current[name] = CheckResult(
                 "unknown",
                 check.command,

@@ -69,9 +69,9 @@ ai-kit menu
 ai-kit menu -C /path/to/repo
 ```
 
-The main screen lists the repository, its enabled modules, and these actions:
+The main screen lists the repository, its enabled modules, preferred setup harness, and these actions:
 Profile modules, Goal status, Doctor, Sync managed files, Run `./dev check`, Run
-`./dev verify`, and Exit. Move with the arrow keys or `j`/`k`, press Enter to
+`./dev verify`, Setup harness, Set up / resume setup, and Exit. Move with the arrow keys or `j`/`k`, press Enter to
 choose, and press `q`, Esc, Ctrl-C, or Ctrl-D to leave.
 
 Profile modules shows every supported module with a checkbox. Space toggles the
@@ -95,6 +95,52 @@ output and true exit status, and waits for Enter before returning to the menu;
 nonzero results are reported as failures. The menu needs a real TTY and a
 capable `TERM`; otherwise it fails with a clear message and never hangs, and a
 window that is too small shows a resize prompt instead of a broken screen.
+
+## Setup with your preferred harness
+
+Choose **Setup harness** in the menu to select Codex, `codex_ds`, OpenCode, or
+Claude Code. The selector shows executable availability; Enter saves the
+highlighted choice and Esc cancels. Saving never launches a session. Preferences
+are user-wide in `$XDG_CONFIG_HOME/ai-kit/config.toml`, with the usual
+`~/.config/ai-kit/config.toml` fallback.
+
+Choose **Set up / resume setup** to prepare the repository and open that harness
+interactively. Equivalent CLI commands are:
+
+```sh
+ai-kit harness                  # show preference and available executables
+ai-kit harness codex_ds          # save a preference
+ai-kit setup -C /path/to/repo
+ai-kit setup --harness claude    # one-run override, not a saved preference
+ai-kit setup --no-launch         # prepare a pending manual handoff
+ai-kit setup --finalize          # validate without launching
+```
+
+Install and authenticate your preferred harness normally. AI Kit inherits its
+configuration and never supplies permission-bypass flags. `codex_ds` must be an
+installed Codex-compatible wrapper; model/provider selection stays in that wrapper.
+Claude Code uses the `claude` executable. An unavailable or incompatible CLI fails
+with actionable guidance.
+
+Setup works in new repositories, existing unmanaged repositories, and already
+managed projects. It snapshots original user files before integration and records
+a pending operation. Existing human instructions and custom context survive;
+manual drift inside AI Kit blocks requires resolution. The harness reads the
+printed shared protocol, reuses real project commands, and writes the documented
+structured report. Claims in documentation do not become approved requirements.
+
+The parent process validates after the session exits; you can also run
+`--finalize` from the session or after a manual handoff. Missing reports, unresolved
+questions, failures, unavailable or skipped checks, and protected source changes
+leave setup pending. Keep `.ai-local/setup/` until setup finishes: it contains the
+original snapshot needed for baseline measurement and preservation checks. Resume
+does not replace intervening work with that snapshot.
+
+`--no-launch` is the scripted preparation path and returns after recording pending
+integration. Its success means preparation succeeded. Finalization is a separate
+gate. No live model invocation is required by AI Kit's launcher tests: executable
+stubs exercise the four command interfaces; a missing local Claude installation
+does not establish a successful real Claude setup run.
 
 ## Goal verification
 

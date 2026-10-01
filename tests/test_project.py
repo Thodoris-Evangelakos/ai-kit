@@ -3,16 +3,24 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
 
 from ai_kit.project import (
+    LOCK_SCHEMA_SETUP,
     ProjectError,
+    _lock_text,
+    apply_managed_block,
     doctor_project,
+    human_bytes,
     init_project,
     load_lock,
     load_profile,
+    managed_block,
+    read_managed_block,
+    set_profile_modules,
     sync_project,
 )
 
@@ -115,3 +123,91 @@ def test_professional_workflow_calls_project_commands(tmp_path: Path) -> None:
     assert sync_project(root).clean
     assert (root / ".github/workflows/verify.yml").read_text() == workflow
     assert (root / "ai-kit.lock").read_bytes() == lock
+
+
+def test_managed_block_helpers_preserve_human_bytes() -> None:
+    text = "# Human guide\n\nKeep the repository small.\n"
+    updated = apply_managed_block(text, "AGENTS.md", "ROUTER")
+    assert human_bytes(updated, "AGENTS.md") == text
+    assert read_managed_block(updated, "AGENTS.md") == managed_block("ROUTER")
+    replaced = apply_managed_block(updated, "AGENTS.md", "ROUTER2")
+    assert human_bytes(replaced, "AGENTS.md") == text
+    assert "ROUTER2" in replaced
+    with pytest.raises(ProjectError, match="block markers"):
+        human_bytes(
+            "<!-- ai-kit:begin -->\nx\n<!-- ai-kit:begin -->\n<!-- ai-kit:end -->\n", "AGENTS.md"
+        )
+
+
+def test_lock_reader_accepts_schema_two(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    init_project(root)
+    lock = load_lock(root)
+    digest = "sha256:" + "0" * 64
+    text = _lock_text(
+        lock.profile_digest,
+        lock.generated,
+        blocks={"AGENTS.md": digest},
+        setup={"kind": "setup", "state": "pending", "steps": ["snapshot", "protocol"]},
+        schema=LOCK_SCHEMA_SETUP,
+    )
+    (root / "ai-kit.lock").write_text(text)
+
+    upgraded = load_lock(root)
+
+    assert upgraded.schema == LOCK_SCHEMA_SETUP
+    assert upgraded.blocks == {"AGENTS.md": digest}
+    assert upgraded.setup is not None and upgraded.setup["state"] == "pending"
+    assert upgraded.setup["steps"] == ["snapshot", "protocol"]
+    # A schema 1 lock still round-trips through the shared reader.
+    assert load_lock(root).generated == lock.generated
+
+
+def test_setup_upgrade_converts_router_and_sync_manages_blocks(tmp_path: Path) -> None:
+    from ai_kit.setup import prepare_setup, setup_status
+
+    root = repo(tmp_path)
+    init_project(root)
+
+    prepare_setup(root)
+
+    assert setup_status(root) == "pending"
+    lock = load_lock(root)
+    assert lock.schema == LOCK_SCHEMA_SETUP
+    assert set(lock.blocks) >= {"AGENTS.md", "CLAUDE.md"}
+    assert "<!-- ai-kit:begin -->" in (root / "AGENTS.md").read_text()
+    assert sync_project(root, check=True).clean
+    checks = {check.name: check for check in doctor_project(root)}
+    assert checks["setup"].ok is True
+    assert "pending" in checks["setup"].detail
+
+
+def test_setup_upgrade_refuses_drifted_router(tmp_path: Path) -> None:
+    from ai_kit.setup import SetupError, prepare_setup
+
+    root = repo(tmp_path)
+    init_project(root)
+    agents = root / "AGENTS.md"
+    agents.write_text(agents.read_text() + "\nHuman edit.\n")
+
+    with pytest.raises(SetupError, match="drift"):
+        prepare_setup(root)
+    assert "Human edit." in agents.read_text()
+
+
+def test_profile_module_change_preserves_pending_setup_metadata(tmp_path: Path) -> None:
+    from ai_kit.setup import prepare_setup, setup_status
+
+    root = repo(tmp_path)
+    init_project(root)
+    prepare_setup(root)
+    before = tomllib.loads((root / "ai-kit.lock").read_text())
+
+    result = set_profile_modules(root, ("learning",))
+
+    assert not result.problems
+    after = tomllib.loads((root / "ai-kit.lock").read_text())
+    assert after["setup"] == before["setup"]
+    assert after["blocks"] == before["blocks"]
+    assert setup_status(root) == "pending"
+    assert sync_project(root, check=True).clean

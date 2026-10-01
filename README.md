@@ -2,7 +2,7 @@
 
 AI Kit makes a repository legible, reproducible, and verifiable to a fresh coding agent. It keeps approved intent, accepted decisions, temporary working state, and goal acceptance evidence in separate places.
 
-The MVP is Linux first, Python 3.11+, and Codex focused. It uses Git for history and project-owned commands for verification. It has no daemon, web UI, or service dependency.
+The MVP is Linux first and Python 3.11+. It uses Git for history and project-owned commands for verification. Setup can open Codex, `codex_ds`, OpenCode, or Claude Code with your existing harness configuration. It has no daemon, web UI, or service dependency.
 
 See [docs/usage.md](docs/usage.md) for a concise guide to installing, initializing, setting up a project, verifying goals, and adopting an existing repository.
 
@@ -39,11 +39,30 @@ Use `--module learning`, `--module webapp`, or `--module professional-repository
 
 Running `ai-kit` with no arguments at a Git repository root inside an interactive terminal opens a keyboard-driven menu. It only starts when stdin and stdout are real terminals; a pipe, redirect, or CI job gets the help text instead of a blocked process. `ai-kit menu` opens it explicitly, and `-C`/`--path` targets another repository: `ai-kit menu -C /path/to/repo`.
 
-The main screen shows the repository and enabled modules, then offers Profile modules, Goal status, Doctor, Sync managed files, Run `./dev check`, Run `./dev verify`, and Exit. Move with the arrow keys (or `j`/`k`), select with Enter, and leave with `q`, Esc, Ctrl-C, or Ctrl-D.
+The main screen shows the repository, enabled modules, and preferred setup harness. It offers Profile modules, Goal status, Doctor, Sync managed files, Run `./dev check`, Run `./dev verify`, Setup harness, Set up / resume setup, and Exit. Move with the arrow keys (or `j`/`k`), select with Enter, and leave with `q`, Esc, Ctrl-C, or Ctrl-D.
 
 Profile modules opens a checklist of every supported module. Space toggles the highlighted module, Enter applies the selection, and Esc or `q` cancels without changing anything. Modules whose behavior is still declarative are labelled so a choice is not misleading, and the footer explains the current effect of `strict-verification` (a `verify` check in every goal contract) and `webapp` (acceptance and runtime-error checks). Applying re-renders managed files and the lock through the same safety checks as `sync`: comments and non-module formatting are preserved, selecting the current set is a no-op, and manual drift, symlinks, or unmanaged collisions are refused before anything is written.
 
 Each action restores the terminal, runs the real command, prints its output and true exit status, and waits for Enter before returning to the menu. A failed command is shown as failed rather than passed. On a terminal that is too small, or when `TERM` is `dumb` or unset, the menu shows a clear message instead of a broken screen.
+
+## Harness-assisted setup
+
+```sh
+ai-kit harness              # show your preference and executable availability
+ai-kit harness opencode     # save a user-wide preference
+ai-kit setup                # prepare or resume setup, then open the harness
+ai-kit setup --harness claude  # override the harness for this run
+ai-kit setup --no-launch    # prepare a manual handoff without opening a session
+ai-kit setup --finalize     # independently validate the integration
+```
+
+The menu's Setup harness selector saves the same preference in `$XDG_CONFIG_HOME/ai-kit/config.toml` (default `~/.config/ai-kit/config.toml`). Enter saves; Esc cancels. Saving a choice never launches it. Unavailable executables are labelled and may be selected for installation later.
+
+`setup` captures the original repository before preparing a pending integration. The harness follows one shared protocol to inspect existing instructions, documentation, CI, and tests; configure useful project commands; and report unresolved questions. Application source, tests, approved intent, and accepted decisions remain protected. Existing instructions and custom `.ai` documents are preserved; instruction updates use hash-managed blocks.
+
+The harness uses your normal interactive permissions, model, and authentication settings. Install the selected CLI yourself; AI Kit does not install harnesses or change their approval settings. Outside an interactive terminal, use `--no-launch` and ask your harness to follow the printed protocol. Interruptions, missing evidence, changed protected files, and failed or unknown checks leave setup pending. Rerun `setup` to resume. A successful harness exit alone cannot finalize adoption.
+
+Finalization checks preserved inputs, instruction ownership, the structured report, project checks, and inherited baselines. Newly discovered check commands are measured against the captured original repository. Doctor reports pending integration separately from structural health. The existing `init` and `adopt --safe` commands retain their deterministic behavior.
 
 ## Goals
 

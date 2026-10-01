@@ -1,7 +1,7 @@
 schema = 1
 id = "harness-setup"
 title = "Set up repositories with a preferred harness"
-state = "READY"
+state = "IMPLEMENTED"
 intent = "Prepare and resume safe repository integration, configure it through an interactive preferred harness, and finalize only with independent preservation and verification evidence."
 acceptance = [
   "The menu and CLI persist a user-wide preference for Codex, codex_ds, OpenCode, or Claude Code, cancel without changes, show availability, and launch interactively with inherited permissions.",

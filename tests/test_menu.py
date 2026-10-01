@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import pty
 import select
+import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -12,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_kit import project
+from ai_kit import menu, project
 from ai_kit.project import (
     ProjectError,
     init_project,
@@ -29,14 +31,41 @@ def repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def child_env() -> dict[str, str]:
-    return {
+def child_env(**overrides: str) -> dict[str, str]:
+    env = {
         **os.environ,
         "PYTHONPATH": SOURCE + os.pathsep + os.environ.get("PYTHONPATH", ""),
         "TERM": "xterm-256color",
         "COLUMNS": "100",
         "LINES": "30",
     }
+    env.update(overrides)
+    return env
+
+
+def harness_config(tmp_path: Path) -> Path:
+    """The isolated user-wide harness config written under XDG_CONFIG_HOME."""
+
+    return tmp_path / "xdg" / "ai-kit" / "config.toml"
+
+
+def harness_path(tmp_path: Path, *installed: str) -> str:
+    """A controlled PATH holding only the named harness stubs plus git.
+
+    Only the named harnesses look installed, while the menu still finds the
+    ``git`` it needs to resolve the repository root.
+    """
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name in installed:
+        stub = bin_dir / name
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(0o755)
+    git = shutil.which("git")
+    if git is not None and not (bin_dir / "git").exists():
+        os.symlink(git, bin_dir / "git")
+    return str(bin_dir)
 
 
 def cli(
@@ -256,7 +285,14 @@ def test_help_and_version_keep_working(tmp_path: Path) -> None:
 class PtySession:
     """Drive an AI Kit process through a real pseudo-terminal."""
 
-    def __init__(self, root: Path, *args: str, rows: int = 30, cols: int = 100) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *args: str,
+        rows: int = 30,
+        cols: int = 100,
+        env: dict[str, str] | None = None,
+    ) -> None:
         self.master, slave = pty.openpty()
         import fcntl
 
@@ -269,13 +305,22 @@ class PtySession:
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "ai_kit.cli", *args],
             cwd=root,
-            env=child_env(),
+            env=env if env is not None else child_env(),
             stdin=slave,
             stdout=slave,
             stderr=slave,
             close_fds=True,
         )
         os.close(slave)
+
+    def resize(self, rows: int, cols: int) -> None:
+        import fcntl
+
+        fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        try:
+            os.kill(self.proc.pid, signal.SIGWINCH)
+        except ProcessLookupError:  # pragma: no cover - the child already exited
+            pass
 
     def text(self) -> str:
         return self.buffer.decode(errors="replace")
@@ -416,3 +461,287 @@ def test_pty_menu_reports_nonzero_command_failure(tmp_path: Path) -> None:
         session.cleanup()
 
     assert session.proc.returncode == 0
+
+
+def test_menu_actions_keep_existing_indices_and_add_harness_and_setup() -> None:
+    labels = [action.label for action in menu.ACTIONS]
+    assert labels[:6] == [
+        "Profile modules",
+        "Goal status",
+        "Doctor",
+        "Sync managed files",
+        "Run ./dev check",
+        "Run ./dev verify",
+    ]
+    assert labels[6] == "Setup harness"
+    assert labels[7] == "Set up / resume setup"
+    assert labels[8] == "Exit"
+    assert menu.ACTIONS[6].kind == "harness"
+    assert menu.ACTIONS[7].kind == "command"
+    assert menu.ACTIONS[7].args == ("setup",)
+    assert menu.ACTIONS[8].kind == "exit"
+
+
+def test_setup_action_dispatches_cli_in_repo_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = repo(tmp_path / "project")
+    init_project(root)
+    action = next(item for item in menu.ACTIONS if item.label == "Set up / resume setup")
+    captured: dict[str, object] = {}
+    shown: list[tuple[list[str], bool]] = []
+
+    def fake_run(command, cwd=None, env=None, **kwargs):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        captured["cwd"] = cwd
+        captured["env"] = env
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(menu.subprocess, "run", fake_run)
+    monkeypatch.setattr(menu, "_show", lambda lines, *, ok: shown.append((list(lines), ok)))
+
+    menu._command_flow(root, action)
+
+    assert captured["cwd"] == root
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[1:4] == ["-m", "ai_kit.cli", "setup"]
+    assert str(root) in command
+    assert shown and shown[-1][1] is True
+
+
+def test_harness_save_failure_is_shown_without_exiting_menu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ai_kit import harness
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(menu, "_choose_harness", lambda *args: "claude")
+    shown = []
+    monkeypatch.setattr(menu, "_show", lambda lines, *, ok: shown.append((lines, ok)))
+
+    def unwritable(name):
+        raise PermissionError("config directory is not writable")
+
+    monkeypatch.setattr(harness, "set_setup_harness", unwritable)
+    menu._harness_flow()
+
+    assert shown and shown[-1][1] is False
+    assert "not writable" in " ".join(shown[-1][0])
+
+
+def test_pty_menu_selects_harness_persists_user_wide_and_never_launches(
+    tmp_path: Path,
+) -> None:
+    root = repo(tmp_path / "project")
+    init_project(root)
+    config = harness_config(tmp_path)
+    bin_dir = harness_path(tmp_path, "codex", "claude")  # opencode and codex_ds stay absent
+    env = child_env(XDG_CONFIG_HOME=str(tmp_path / "xdg"), PATH=str(bin_dir))
+    session = PtySession(root, "menu", "-C", str(root), env=env)
+    try:
+        session.expect("Choose an action")
+        assert "Preferred harness: Codex" in session.text()
+
+        for _ in range(6):  # ... -> Run ./dev verify -> Setup harness
+            session.send(b"j")
+        session.send(b"\r")
+        session.expect("Preferred setup harness")
+        session.capture_during()
+        screen = session.text()
+        assert "Codex (codex) - installed" in screen
+        assert "[*] Codex (codex) - installed" in screen  # current preference is marked
+        assert "codex_ds (codex_ds) - not installed" in screen
+        assert "OpenCode (opencode) - not installed" in screen
+        assert "Claude Code (claude) - installed" in screen
+        assert "Esc/q cancel" in screen
+
+        session.send(b"jj")  # codex -> codex_ds -> opencode
+        session.send(b"\r")
+        session.expect("Preferred harness: OpenCode (opencode)")
+        session.expect("not installed yet")
+        session.expect("Saved.")
+        session.expect("Press Enter to return")
+        session.send(b"\r")
+
+        session.expect("Choose an action")
+        assert "Preferred harness: OpenCode (not installed)" in session.text()
+        session.send(b"q")
+        session.close()
+    finally:
+        session.cleanup()
+
+    assert session.proc.returncode == 0
+    assert 'setup_harness = "opencode"' in config.read_text()
+    assert "ai_kit.cli" not in session.text().rsplit("Choose an action", 1)[-1]
+    assert "Opening" not in session.text()
+    assert session.during is not None
+    assert not session.during[3] & termios.ICANON
+    assert session.after is not None
+    assert session.after[:4] == session.before[:4]
+
+
+@pytest.mark.parametrize("cancel", [b"q", b"\x1b", b"\x04"])
+def test_pty_menu_harness_cancel_keeps_config_absent(tmp_path: Path, cancel: bytes) -> None:
+    root = repo(tmp_path / "project")
+    init_project(root)
+    config = harness_config(tmp_path)
+    env = child_env(XDG_CONFIG_HOME=str(tmp_path / "xdg"), PATH=str(harness_path(tmp_path)))
+    session = PtySession(root, "menu", "-C", str(root), env=env)
+    try:
+        session.expect("Choose an action")
+        for _ in range(6):
+            session.send(b"j")
+        session.send(b"\r")
+        session.expect("Preferred setup harness")
+        session.send(b"jj")  # move onto opencode
+        session.send(cancel)  # cancel without saving
+        session.expect("Choose an action")
+        session.send(b"q")
+        session.close()
+    finally:
+        session.cleanup()
+
+    assert session.proc.returncode == 0
+    assert not config.exists()
+
+
+def test_pty_menu_harness_ctrl_c_cancels_without_writing(tmp_path: Path) -> None:
+    root = repo(tmp_path / "project")
+    init_project(root)
+    config = harness_config(tmp_path)
+    env = child_env(XDG_CONFIG_HOME=str(tmp_path / "xdg"), PATH=str(harness_path(tmp_path)))
+    session = PtySession(root, "menu", "-C", str(root), env=env)
+    try:
+        session.expect("Choose an action")
+        for _ in range(6):
+            session.send(b"j")
+        session.send(b"\r")
+        session.expect("Preferred setup harness")
+        session.send(b"jj")  # move onto opencode
+        os.kill(session.proc.pid, signal.SIGINT)  # Ctrl-C arrives as SIGINT
+        session.expect("Choose an action")
+        session.send(b"q")
+        session.close()
+    finally:
+        session.cleanup()
+
+    assert session.proc.returncode == 0
+    assert not config.exists()
+
+
+def test_pty_menu_harness_cancel_keeps_existing_config_unchanged(tmp_path: Path) -> None:
+    root = repo(tmp_path / "project")
+    init_project(root)
+    config = harness_config(tmp_path)
+    config.parent.mkdir(parents=True)
+    original = 'setup_harness = "claude"\n# keep me\n'
+    config.write_text(original)
+    env = child_env(XDG_CONFIG_HOME=str(tmp_path / "xdg"), PATH=str(harness_path(tmp_path)))
+    session = PtySession(root, "menu", "-C", str(root), env=env)
+    try:
+        session.expect("Choose an action")
+        assert "Preferred harness: Claude Code (not installed)" in session.text()
+        for _ in range(6):
+            session.send(b"j")
+        session.send(b"\r")
+        session.expect("Preferred setup harness")
+        session.send(b"jj")  # move off the current selection
+        session.send(b"\x1b")  # Esc cancels without writing
+        session.expect("Choose an action")
+        session.send(b"q")
+        session.close()
+    finally:
+        session.cleanup()
+
+    assert session.proc.returncode == 0
+    assert config.read_text() == original
+
+
+def test_pty_menu_saves_not_installed_harness_with_install_guidance(tmp_path: Path) -> None:
+    root = repo(tmp_path / "project")
+    init_project(root)
+    config = harness_config(tmp_path)
+    env = child_env(XDG_CONFIG_HOME=str(tmp_path / "xdg"), PATH=str(harness_path(tmp_path)))
+    session = PtySession(root, "menu", "-C", str(root), env=env)
+    try:
+        session.expect("Choose an action")
+        for _ in range(6):
+            session.send(b"j")
+        session.send(b"\r")
+        session.expect("Preferred setup harness")
+        assert "Codex (codex) - not installed" in session.text()
+        session.send(b"jjj")  # codex -> codex_ds -> opencode -> claude
+        session.send(b"\r")
+        session.expect("Preferred harness: Claude Code (claude)")
+        session.expect("not installed yet")
+        session.expect("install it before")
+        session.expect("Press Enter to return")
+        session.send(b"\r")
+        session.expect("Choose an action")
+        session.send(b"q")
+        session.close()
+    finally:
+        session.cleanup()
+
+    assert session.proc.returncode == 0
+    assert 'setup_harness = "claude"' in config.read_text()
+
+
+def test_pty_menu_harness_screen_survives_resize(tmp_path: Path) -> None:
+    root = repo(tmp_path / "project")
+    init_project(root)
+    env = child_env(XDG_CONFIG_HOME=str(tmp_path / "xdg"), PATH=str(harness_path(tmp_path)))
+    # Let ncurses read the real pty size so a SIGWINCH actually changes it.
+    env.pop("COLUMNS", None)
+    env.pop("LINES", None)
+    session = PtySession(root, "menu", "-C", str(root), env=env)
+    try:
+        session.expect("Choose an action")
+        for _ in range(6):
+            session.send(b"j")
+        session.send(b"\r")
+        session.expect("Preferred setup harness")
+
+        session.resize(6, 20)
+        session.send(b"z")  # force a redraw after the shrink
+        session.expect("Terminal too small")
+        session.expect("Resize or q to quit")
+
+        session.resize(30, 100)
+        session.send(b"z")  # force a redraw after the grow
+        session.expect("Preferred setup harness")
+        session.send(b"q")  # cancel back to the menu
+        session.expect("Choose an action")
+        session.send(b"q")
+        session.close()
+    finally:
+        session.cleanup()
+
+    assert session.proc.returncode == 0
+
+
+def test_pty_menu_setup_action_dispatches_cli_then_returns(tmp_path: Path) -> None:
+    root = repo(tmp_path / "project")
+    init_project(root)
+    # No harness on PATH, so `ai-kit setup` refuses fast without launching anything.
+    env = child_env(XDG_CONFIG_HOME=str(tmp_path / "xdg"), PATH=str(harness_path(tmp_path)))
+    session = PtySession(root, "menu", "-C", str(root), env=env)
+    try:
+        session.expect("Choose an action")
+        for _ in range(7):  # ... -> Setup harness -> Set up / resume setup
+            session.send(b"j")
+        session.send(b"\r")
+        session.expect("ai_kit.cli setup")
+        session.expect(f"-C {root}")
+        session.expect("Press Enter to return")
+        session.send(b"\r")
+        session.expect("Choose an action")
+        session.send(b"q")
+        session.close()
+    finally:
+        session.cleanup()
+
+    assert session.proc.returncode == 0
+    assert session.after is not None
+    assert session.after[:4] == session.before[:4]

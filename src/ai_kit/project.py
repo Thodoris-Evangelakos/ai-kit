@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import __version__
-from .system import GitRepository, UnsafeWriteError, atomic_write_text, sha256_file, sha256_text
+from .system import (
+    GitRepository,
+    UnsafeWriteError,
+    atomic_write_text,
+    read_text_exact,
+    sha256_file,
+    sha256_text,
+)
 
 PROFILE_SCHEMA = 1
 LOCK_SCHEMA = 1
+# Schema 2 adds hash-managed instruction blocks and a pending setup operation.
+LOCK_SCHEMA_SETUP = 2
 ADAPTER_SCHEMA = 1
 # Deterministic order used whenever AI Kit rewrites the profile.
 MODULE_ORDER = (
@@ -42,8 +52,11 @@ class Profile:
 
 @dataclass(frozen=True, slots=True)
 class Lock:
+    schema: int
     profile_digest: str
     generated: dict[str, str]
+    blocks: dict[str, str] = field(default_factory=dict)
+    setup: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +93,18 @@ satisfy its acceptance contract and required verification policy. Use
 
 Record only high-signal, current discoveries in `.ai/current/FINDINGS.md`;
 delete stale entries. Git preserves history.
+"""
+
+# Appended to the managed instruction block for setup-managed repositories so a
+# fresh agent session is routed to the pending protocol instead of guessing.
+# It is included whenever a setup record exists (pending or completed) so the
+# block digest is stable across finalization and ``sync`` stays clean.
+SETUP_ROUTER_NOTE = """
+
+This repository has an AI Kit setup recorded in `ai-kit.lock`. If that record
+still marks the setup as **pending**, read `.ai/setup/protocol.md` and complete
+it before other work, then run `ai-kit setup --finalize`. Otherwise ignore this
+note.
 """
 
 MANAGE_GOAL = """---
@@ -173,6 +198,80 @@ case "${1:-}" in
     exit 2 ;;
 esac
 """
+
+# Hash-managed instruction blocks. AI Kit only ever rewrites the bytes between
+# these markers; everything else in an instruction file is human-owned.
+BLOCK_BEGIN = "<!-- ai-kit:begin -->"
+BLOCK_END = "<!-- ai-kit:end -->"
+CLAUDE_BRIDGE = "@AGENTS.md"
+# Instruction files whose AI Kit content lives inside a managed block.
+BLOCK_PATHS = ("AGENTS.md", "AGENTS.override.md", "CLAUDE.md")
+
+
+def managed_block(content: str) -> str:
+    """Render ``content`` as a delimited, hash-checkable AI Kit block."""
+
+    return f"{BLOCK_BEGIN}\n{content.rstrip(chr(10))}\n{BLOCK_END}\n"
+
+
+def block_content(relative: str, profile: Profile, *, setup: bool = False) -> str:
+    """Return the AI Kit-managed block body for one instruction file.
+
+    When ``setup`` is true the block also routes a fresh agent session to the
+    AI Kit setup protocol recorded in ``ai-kit.lock``.
+    """
+
+    if relative == "CLAUDE.md":
+        body = CLAUDE_BRIDGE
+    else:
+        body = ROUTER.rstrip("\n")
+    if setup:
+        body += SETUP_ROUTER_NOTE.rstrip("\n")
+    return body
+
+
+def _block_bounds(text: str, relative: str) -> tuple[int, int] | None:
+    begins = [match.start() for match in re.finditer(re.escape(BLOCK_BEGIN), text)]
+    ends = [match.start() for match in re.finditer(re.escape(BLOCK_END), text)]
+    if not begins and not ends:
+        return None
+    if len(begins) != 1 or len(ends) != 1 or begins[0] > ends[0]:
+        raise ProjectError(
+            f"{relative}: ambiguous AI Kit block markers; resolve the collision manually"
+        )
+    end = ends[0] + len(BLOCK_END)
+    if text[end : end + 1] == "\n":
+        # A managed block always ends its own line; including the newline keeps
+        # removal byte-exact so surrounding human bytes are preserved verbatim.
+        end += 1
+    return begins[0], end
+
+
+def read_managed_block(text: str, relative: str) -> str | None:
+    """Return the current managed block text, or ``None`` when it is absent."""
+
+    bounds = _block_bounds(text, relative)
+    return None if bounds is None else text[bounds[0] : bounds[1]]
+
+
+def human_bytes(text: str, relative: str) -> str:
+    """Return the human-owned bytes of an instruction file (block removed)."""
+
+    bounds = _block_bounds(text, relative)
+    if bounds is None:
+        return text
+    return text[: bounds[0]] + text[bounds[1] :]
+
+
+def apply_managed_block(text: str, relative: str, content: str) -> str:
+    """Insert or replace the managed block, preserving every human byte."""
+
+    block = managed_block(content)
+    bounds = _block_bounds(text, relative)
+    if bounds is None:
+        # Prepend so that removing ``[start:end]`` reproduces the original text.
+        return block + text
+    return text[: bounds[0]] + block + text[bounds[1] :]
 
 
 def _root(root: Path) -> Path:
@@ -329,9 +428,24 @@ def render_codex(profile: Profile) -> dict[str, str]:
     return generated
 
 
-def _lock_text(profile_digest: str, generated: dict[str, str]) -> str:
+def _render_toml_value(value: object) -> str:
+    if isinstance(value, list):
+        return "[" + ", ".join(_render_toml_value(item) for item in value) + "]"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return json.dumps(str(value))
+
+
+def _lock_text(
+    profile_digest: str,
+    generated: dict[str, str],
+    *,
+    blocks: dict[str, str] | None = None,
+    setup: dict[str, object] | None = None,
+    schema: int = LOCK_SCHEMA,
+) -> str:
     lines = [
-        f"schema = {LOCK_SCHEMA}",
+        f"schema = {schema}",
         f'ai_kit_version = "{__version__}"',
         f"profile_schema = {PROFILE_SCHEMA}",
         f"adapter_schema = {ADAPTER_SCHEMA}",
@@ -344,6 +458,13 @@ def _lock_text(profile_digest: str, generated: dict[str, str]) -> str:
         "[generated]",
     ]
     lines.extend(f'"{path}" = "{digest}"' for path, digest in sorted(generated.items()))
+    if blocks:
+        lines.extend(["", "[blocks]"])
+        lines.extend(f'"{path}" = "{digest}"' for path, digest in sorted(blocks.items()))
+    if setup:
+        lines.extend(["", "[setup]"])
+        for key in sorted(setup):
+            lines.append(f"{key} = {_render_toml_value(setup[key])}")
     return "\n".join(lines) + "\n"
 
 
@@ -355,7 +476,7 @@ def load_lock(root: Path) -> Lock:
         data = tomllib.loads(path.read_text())
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ProjectError(f"invalid or missing {path}: {exc}") from exc
-    expected = {
+    required = {
         "schema",
         "ai_kit_version",
         "profile_schema",
@@ -364,7 +485,11 @@ def load_lock(root: Path) -> Lock:
         "adapters",
         "generated",
     }
-    if set(data) != expected or type(data["schema"]) is not int or data["schema"] != LOCK_SCHEMA:
+    schema = data.get("schema")
+    if type(schema) is not int or schema not in (LOCK_SCHEMA, LOCK_SCHEMA_SETUP):
+        raise ProjectError(f"{path}: invalid or unsupported lock schema")
+    allowed = required if schema == LOCK_SCHEMA else required | {"blocks", "setup"}
+    if not required <= set(data) or set(data) - allowed:
         raise ProjectError(f"{path}: invalid or unsupported lock schema")
     if (
         type(data["profile_schema"]) is not int
@@ -386,7 +511,36 @@ def load_lock(root: Path) -> Lock:
         for k, v in generated.items()
     ):
         raise ProjectError(f"{path}: invalid generated digests")
-    return Lock(profile_digest=digest, generated=generated)
+    blocks: dict[str, str] = {}
+    if schema >= LOCK_SCHEMA_SETUP:
+        raw_blocks = data.get("blocks", {})
+        if not isinstance(raw_blocks, dict) or any(
+            not isinstance(key, str)
+            or not isinstance(value, str)
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", value)
+            for key, value in raw_blocks.items()
+        ):
+            raise ProjectError(f"{path}: invalid managed block digests")
+        blocks = dict(raw_blocks)
+    setup: dict[str, object] | None = None
+    if schema >= LOCK_SCHEMA_SETUP and "setup" in data:
+        raw_setup = data["setup"]
+        if not isinstance(raw_setup, dict) or any(not isinstance(key, str) for key in raw_setup):
+            raise ProjectError(f"{path}: invalid setup record")
+        for key, value in raw_setup.items():
+            if isinstance(value, list):
+                if any(not isinstance(item, str) for item in value):
+                    raise ProjectError(f"{path}: invalid setup value for {key}")
+            elif not isinstance(value, str):
+                raise ProjectError(f"{path}: invalid setup value for {key}")
+        setup = dict(raw_setup)
+    return Lock(
+        schema=schema,
+        profile_digest=digest,
+        generated=generated,
+        blocks=blocks,
+        setup=setup,
+    )
 
 
 def _managed_path(root: Path, relative: str) -> Path:
@@ -437,17 +591,83 @@ def _local_sync_plan(root: Path, modules: tuple[str, ...]) -> SyncResult:
     return SyncResult(tuple(changes), tuple(problems))
 
 
+def _desired_blocks(profile: Profile, lock: Lock) -> dict[str, str]:
+    return {
+        relative: sha256_text(
+            managed_block(block_content(relative, profile, setup=lock.setup is not None))
+        )
+        for relative in lock.blocks
+    }
+
+
+def _block_sync_plan(root: Path, profile: Profile, lock: Lock) -> SyncResult:
+    changes: list[str] = []
+    problems: list[str] = []
+    desired = _desired_blocks(profile, lock)
+    for relative in sorted(lock.blocks):
+        path = _managed_path(root, relative)
+        if not path.is_file():
+            problems.append(f"managed instruction file missing: {relative}")
+            continue
+        try:
+            text = read_text_exact(path)
+            bounds = _block_bounds(text, relative)
+        except ProjectError as exc:
+            problems.append(str(exc))
+            continue
+        if bounds is None:
+            problems.append(
+                f"managed block missing: {relative}; restore it or run setup to reconcile"
+            )
+            continue
+        actual = sha256_text(text[bounds[0] : bounds[1]])
+        if actual != lock.blocks[relative]:
+            problems.append(f"managed block drift: {relative}")
+            continue
+        if desired[relative] != lock.blocks[relative]:
+            changes.append(f"update managed block {relative}")
+    return SyncResult(tuple(changes), tuple(problems))
+
+
+def _apply_blocks(root: Path, profile: Profile, lock: Lock) -> dict[str, str]:
+    desired = _desired_blocks(profile, lock)
+    for relative, digest in sorted(desired.items()):
+        if digest == lock.blocks[relative]:
+            continue
+        path = _managed_path(root, relative)
+        digest_before = sha256_file(path)
+        text = read_text_exact(path)
+        updated = apply_managed_block(
+            text, relative, block_content(relative, profile, setup=lock.setup is not None)
+        )
+        atomic_write_text(path, updated, expected_digest=digest_before)
+    return desired
+
+
 def sync_project(root: Path, *, check: bool = False) -> SyncResult:
     root = _root(root)
     profile = load_profile(root)
     lock = load_lock(root)
     rendered = render_codex(profile)
+    block_mode = lock.schema >= LOCK_SCHEMA_SETUP and bool(lock.blocks)
+    if block_mode:
+        rendered.pop("AGENTS.md", None)
     plan = _sync_plan(root, rendered, lock)
     local = _local_sync_plan(root, profile.modules)
     plan = SyncResult((*plan.changes, *local.changes), (*plan.problems, *local.problems))
+    block_plan = _block_sync_plan(root, profile, lock) if block_mode else None
+    if block_plan is not None:
+        plan = SyncResult(
+            (*plan.changes, *block_plan.changes), (*plan.problems, *block_plan.problems)
+        )
     profile_digest = sha256_file(root / ".ai/profile.toml")
+    desired_blocks = _desired_blocks(profile, lock) if block_mode else None
     desired_lock = _lock_text(
-        profile_digest, {path: sha256_text(content) for path, content in rendered.items()}
+        profile_digest,
+        {path: sha256_text(content) for path, content in rendered.items()},
+        blocks=desired_blocks,
+        setup=lock.setup,
+        schema=lock.schema,
     )
     if profile_digest != lock.profile_digest and not plan.changes:
         plan = SyncResult((*plan.changes, "update ai-kit.lock"), plan.problems)
@@ -468,6 +688,8 @@ def sync_project(root: Path, *, check: bool = False) -> SyncResult:
                 )
         else:
             atomic_write_text(path, rendered[relative])
+    if block_mode:
+        _apply_blocks(root, profile, lock)
     lock_path = root / "ai-kit.lock"
     atomic_write_text(lock_path, desired_lock, expected_content=lock_path.read_text())
     return SyncResult(plan.changes, ())
@@ -510,6 +732,9 @@ def set_profile_modules(root: Path, modules: tuple[str, ...] | list[str]) -> Syn
         raise ProjectError(f"{_REFUSAL}: the rewritten module list does not match the selection")
     lock = load_lock(root)
     candidate = render_codex(Profile(PROFILE_SCHEMA, "software", ordered))
+    if lock.schema >= LOCK_SCHEMA_SETUP:
+        # Instruction files are managed as hash-checked blocks, not whole files.
+        candidate.pop("AGENTS.md", None)
     plan = _sync_plan(root, candidate, lock)
     local = _local_sync_plan(root, ordered)
     problems = (*plan.problems, *local.problems)
@@ -716,4 +941,19 @@ def doctor_project(root: Path) -> tuple[DoctorCheck, ...]:
         )
     except (ImportError, OSError, ValueError, RuntimeError) as exc:
         checks.append(DoctorCheck("goals", False, str(exc)))
+    try:
+        from .setup import setup_status
+
+        status = setup_status(root)
+    except (ImportError, OSError, ValueError, RuntimeError):
+        status = None
+    if status in ("pending", "completed"):
+        detail = (
+            "pending integration; not a verification pass"
+            if status == "pending"
+            else "integration completed"
+        )
+        # Informational so that ``./dev verify`` (which calls doctor) cannot
+        # deadlock finalization while a setup operation is still pending.
+        checks.append(DoctorCheck("setup", True, f"{status} ({detail})"))
     return tuple(checks)

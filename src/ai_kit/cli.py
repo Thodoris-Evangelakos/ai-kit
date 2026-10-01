@@ -71,6 +71,115 @@ def version_command() -> None:
 
 
 @app.command()
+def harness(
+    name: str | None = typer.Argument(None, help="Save the preferred setup harness."),
+) -> None:
+    """Show or select the user-wide setup harness."""
+
+    from .harness import (
+        HARNESS_CHOICES,
+        HarnessError,
+        get_setup_harness,
+        harness_available,
+        set_setup_harness,
+    )
+
+    if name is not None and name not in HARNESS_CHOICES:
+        _fail("unsupported harness; choose " + ", ".join(HARNESS_CHOICES), 2)
+    try:
+        if name is not None:
+            changed = set_setup_harness(name)
+            out.print(f"Setup harness {'saved' if changed else 'unchanged'}: {name}")
+        selected = get_setup_harness()
+    except (HarnessError, OSError, ValueError) as exc:
+        _fail(str(exc))
+    table = Table(title=f"Setup harness: {selected}")
+    table.add_column("Harness")
+    table.add_column("Executable")
+    table.add_column("Availability")
+    for executable, label in HARNESS_CHOICES.items():
+        table.add_row(
+            label,
+            executable,
+            "installed" if harness_available(executable) else "not installed",
+        )
+    out.print(table)
+
+
+@app.command()
+def setup(
+    path: Path = typer.Option(Path("."), "--path", "-C", help="Git repository root."),
+    harness: str | None = typer.Option(None, "--harness", help="Override the setup harness once."),
+    no_launch: bool = typer.Option(False, "--no-launch", help="Prepare a pending manual handoff."),
+    finalize: bool = typer.Option(False, "--finalize", help="Validate setup without launching."),
+) -> None:
+    """Prepare or resume integration through the preferred interactive harness."""
+
+    from .harness import (
+        HARNESS_CHOICES,
+        HarnessError,
+        _active_session,
+        get_setup_harness,
+        harness_available,
+        launch_setup_harness,
+    )
+    from .menu import interactive_ready
+    from .project import _root
+    from .setup import SetupError, finalize_setup, prepare_setup, setup_status
+
+    if finalize and (no_launch or harness is not None):
+        _fail("--finalize cannot be combined with --no-launch or --harness", 2)
+    if harness is not None and harness not in HARNESS_CHOICES:
+        _fail("unsupported harness; choose " + ", ".join(HARNESS_CHOICES), 2)
+    try:
+        root = _root(path)
+        if finalize:
+            finalize_setup(root)
+            out.print("AI Kit setup verified.")
+            return
+        if setup_status(root) == "completed":
+            out.print("AI Kit setup already completed.")
+            return
+        selected = harness or get_setup_harness()
+        if not no_launch:
+            if not interactive_ready():
+                raise HarnessError(
+                    "interactive setup needs a terminal; use --no-launch to prepare "
+                    "a manual handoff, then --finalize to validate it"
+                )
+            if _active_session() is not None:
+                raise HarnessError(
+                    "setup is already inside an agent session; use --no-launch "
+                    "and follow the protocol in this session"
+                )
+            if not harness_available(selected):
+                raise HarnessError(
+                    f"setup harness {selected!r} is not installed; install it, "
+                    "select another with ai-kit harness, or use --no-launch"
+                )
+        protocol = prepare_setup(root)
+        if no_launch:
+            out.print(f"Setup pending. Protocol: {protocol.relative_to(root)}")
+            out.print(
+                "Open your harness in this repository and ask it to follow the protocol. "
+                "Run ai-kit setup --finalize when ready."
+            )
+            return
+        out.print(f"Opening {HARNESS_CHOICES[selected]} for repository setup.")
+        code = launch_setup_harness(root, selected, protocol)
+        if code:
+            out.print(f"Harness exited with code {code}; setup remains pending.")
+            raise typer.Exit(code if code > 0 else 128 - code)
+        finalize_setup(root)
+    except (SetupError, HarnessError, ProjectError, OSError, ValueError) as exc:
+        _fail(str(exc))
+    except KeyboardInterrupt:
+        out.print("Setup interrupted; resume with ai-kit setup.")
+        raise typer.Exit(130) from None
+    out.print("AI Kit setup verified.")
+
+
+@app.command()
 def init(
     target: Path | None = typer.Argument(
         None, help="Git repository root; defaults to the current directory."

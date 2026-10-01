@@ -1,7 +1,7 @@
 schema = 1
 id = "terminal-menu"
 title = "Navigate AI Kit in the terminal"
-state = "DONE"
+state = "IMPLEMENTED"
 intent = "Use an in-terminal selection interface to change profile modules and run common project actions without remembering their CLI commands."
 acceptance = [
   "Running ai-kit in an interactive terminal opens a keyboard-driven menu; ai-kit menu -C selects a repository, while help, existing commands, and noninteractive use remain available without hanging.",

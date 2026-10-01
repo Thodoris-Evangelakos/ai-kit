@@ -330,3 +330,64 @@ def test_baseline_comparison_reports_regression_and_unresolved_evidence() -> Non
         in compare_baseline({"verify": old_failure}, {"verify": changed_failure}).unresolved
     )
     assert not compare_baseline({"verify": old_failure}, {"verify": old_failure}).unresolved
+
+
+def _extend_baseline(root: Path, name: str, entry: dict[str, object]) -> None:
+    path = root / ".ai/baseline.json"
+    data = json.loads(path.read_text())
+    data["checks"][name] = entry
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def test_recheck_baseline_honors_setup_discovery_records(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    dev = root / "dev"
+    dev.write_text("#!/bin/sh\nexit 0\n")
+    dev.chmod(0o755)
+    commit(root)
+    assert adopt_safe(root).status == "pass"
+    _extend_baseline(
+        root,
+        "custom",
+        {
+            "status": "pass",
+            "command": ["python3", "-c", "import sys; sys.exit(0)"],
+            "exit_code": 0,
+            "output": "",
+            "reason": "Exited with code 0",
+            "counts": {},
+            "discovery": True,
+        },
+    )
+
+    comparison = recheck_baseline(root)
+
+    # The discovered check is re-run instead of silently disappearing.
+    assert comparison.status == "pass"
+    assert not comparison.unresolved
+
+
+def test_unrecognized_check_without_discovery_marker_stays_unknown(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    dev = root / "dev"
+    dev.write_text("#!/bin/sh\nexit 0\n")
+    dev.chmod(0o755)
+    commit(root)
+    assert adopt_safe(root).status == "pass"
+    _extend_baseline(
+        root,
+        "custom",
+        {
+            "status": "pass",
+            "command": ["python3", "-c", "import sys; sys.exit(0)"],
+            "exit_code": 0,
+            "output": "",
+            "reason": "Exited with code 0",
+            "counts": {},
+        },
+    )
+
+    comparison = recheck_baseline(root)
+
+    assert comparison.status == "unknown"
+    assert any("custom" in item for item in comparison.unresolved)

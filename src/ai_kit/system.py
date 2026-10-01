@@ -373,6 +373,19 @@ def sha256_file(path: Path | str, *, chunk_size: int = 1 << 20) -> str:
     return _DIGEST_PREFIX + digest.hexdigest()
 
 
+def read_text_exact(path: Path | str, *, encoding: str = "utf-8", errors: str = "strict") -> str:
+    """Read text without universal-newline translation.
+
+    Managed markdown blocks must preserve CRLF and lone-CR bytes exactly, so
+    every comparison and rewrite of an instruction file reads with
+    ``newline=""``. ``Path.read_text`` always translates line endings, which
+    would silently rewrite human bytes on a round trip.
+    """
+
+    with Path(path).open("r", encoding=encoding, errors=errors, newline="") as handle:
+        return handle.read()
+
+
 def _normalize_digest(value: str) -> str:
     candidate = value.strip().lower()
     if candidate.startswith(_DIGEST_PREFIX):

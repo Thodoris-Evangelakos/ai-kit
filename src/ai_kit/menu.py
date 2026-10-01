@@ -44,7 +44,7 @@ _MIN_COLS = 30
 @dataclass(frozen=True, slots=True)
 class Action:
     label: str
-    kind: str  # "profile", "command", "dev", or "exit"
+    kind: str  # "profile", "harness", "command", "dev", or "exit"
     args: tuple[str, ...] = ()
 
 
@@ -55,6 +55,8 @@ ACTIONS = (
     Action("Sync managed files", "command", ("sync",)),
     Action("Run ./dev check", "dev", ("check",)),
     Action("Run ./dev verify", "dev", ("verify",)),
+    Action("Setup harness", "harness"),
+    Action("Set up / resume setup", "command", ("setup",)),
     Action("Exit", "exit"),
 )
 
@@ -103,6 +105,32 @@ def _too_small(stdscr: curses._CursesWindow, rows: int, cols: int) -> bool:
     return True
 
 
+def _harness_module():
+    """Import :mod:`ai_kit.harness` lazily so a missing module is a clear error."""
+
+    try:
+        from . import harness
+    except ImportError as exc:  # pragma: no cover - only when the module is absent
+        raise MenuError("harness support is unavailable in this build") from exc
+    return harness
+
+
+def _preferred_harness_label() -> str:
+    """Best-effort label for the preferred harness; never raises."""
+
+    try:
+        harness = _harness_module()
+    except MenuError:
+        return "(harness support unavailable)"
+    try:
+        current = harness.get_setup_harness()
+        available = harness.harness_available(current)
+    except harness.HarnessError:
+        return "(unreadable preference)"
+    label = harness.HARNESS_CHOICES.get(current, current)
+    return f"{label}{'' if available else ' (not installed)'}"
+
+
 def _screen(call):
     try:
         return curses.wrapper(call)
@@ -118,7 +146,7 @@ def _window_start(index: int, count: int, visible: int) -> int:
     return max(0, min(index - visible + 1, count - visible))
 
 
-def _choose_action(repo: Path, modules: str) -> int | None:
+def _choose_action(repo: Path, modules: str, harness: str) -> int | None:
     def loop(stdscr) -> int | None:
         try:
             curses.curs_set(0)
@@ -136,6 +164,7 @@ def _choose_action(repo: Path, modules: str) -> int | None:
             _write(stdscr, 0, 0, "AI Kit terminal menu", curses.A_BOLD)
             _write(stdscr, 1, 0, f"Repository: {repo}"[: cols - 1])
             _write(stdscr, 2, 0, f"Modules: {modules}"[: cols - 1])
+            _write(stdscr, 3, 0, f"Preferred harness: {harness}"[: cols - 1])
             _write(stdscr, 4, 0, "Choose an action")
             first = 5
             available = max(1, rows - first - 2)
@@ -242,6 +271,110 @@ def _choose_modules(repo: Path, current: tuple[str, ...]) -> tuple[str, ...] | N
     return _screen(loop)
 
 
+def _draw_harness(
+    stdscr,
+    order: tuple[str, ...],
+    labels: dict[str, str],
+    current: str,
+    cursor: int,
+    available: dict[str, bool],
+) -> None:
+    rows, cols = stdscr.getmaxyx()
+    stdscr.erase()
+    _write(stdscr, 0, 0, "Preferred setup harness", curses.A_BOLD)
+    _write(stdscr, 1, 0, "Saved user-wide for 'Set up / resume setup'."[: cols - 1])
+    _write(stdscr, 2, 0, "Arrows or j/k move | Enter save | Esc/q cancel"[: cols - 1])
+    first = 4
+    room = max(1, rows - first - 3)
+    top = _window_start(cursor, len(order), room)
+    for offset, name in enumerate(order[top : top + room]):
+        position = top + offset
+        marker = ">" if position == cursor else " "
+        chosen = "*" if name == current else " "
+        state = "installed" if available.get(name) else "not installed"
+        label = f" {marker} [{chosen}] {labels.get(name, name)} ({name}) - {state}"
+        _write(
+            stdscr,
+            first + offset,
+            0,
+            label[: cols - 1],
+            curses.A_REVERSE if position == cursor else 0,
+        )
+    _write(stdscr, rows - 2, 0, "  * = current preference"[: cols - 1])
+    _write(
+        stdscr,
+        rows - 1,
+        0,
+        "  A not-installed harness is saved but must be installed before launching."[: cols - 1],
+    )
+    stdscr.refresh()
+
+
+def _choose_harness(harness, current: str, available: dict[str, bool]) -> str | None:
+    order = tuple(harness.HARNESS_CHOICES)
+    labels = dict(harness.HARNESS_CHOICES)
+
+    def loop(stdscr) -> str | None:
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
+        cursor = order.index(current) if current in order else 0
+        while True:
+            rows, cols = stdscr.getmaxyx()
+            if _too_small(stdscr, rows, cols):
+                key = stdscr.getch()
+                if key in (ord("q"), 27, 3, 4):
+                    return None
+                continue
+            _draw_harness(stdscr, order, labels, current, cursor, available)
+            key = stdscr.getch()
+            if key in (curses.KEY_UP, ord("k")):
+                cursor = (cursor - 1) % len(order)
+            elif key in (curses.KEY_DOWN, ord("j")):
+                cursor = (cursor + 1) % len(order)
+            elif key in (curses.KEY_ENTER, 10, 13):
+                return order[cursor]
+            elif key in (ord("q"), 27, 3, 4):
+                return None
+            elif key == curses.KEY_RESIZE:
+                continue
+
+    return _screen(loop)
+
+
+def _harness_flow() -> None:
+    """Pick and persist the preferred setup harness without ever launching it."""
+
+    try:
+        harness = _harness_module()
+    except MenuError as exc:
+        _show(["Harness setup unavailable", str(exc)], ok=False)
+        return
+    try:
+        current = harness.get_setup_harness()
+        available = {name: harness.harness_available(name) for name in harness.HARNESS_CHOICES}
+    except (harness.HarnessError, OSError, ValueError) as exc:
+        _show(["Cannot read the harness preference", str(exc)], ok=False)
+        return
+    selection = _choose_harness(harness, current, available)
+    if selection is None:
+        return
+    try:
+        changed = harness.set_setup_harness(selection)
+    except (harness.HarnessError, OSError, ValueError) as exc:
+        _show(["Could not save the harness preference", str(exc)], ok=False)
+        return
+    label = harness.HARNESS_CHOICES.get(selection, selection)
+    lines = [f"Preferred harness: {label} ({selection})"]
+    if not available.get(selection, True):
+        lines.append(
+            "This harness is not installed yet; install it before 'Set up / resume setup'."
+        )
+    lines.append("Saved." if changed else "Unchanged.")
+    _show(lines, ok=True)
+
+
 def _wait_for_enter() -> None:
     try:
         input("Press Enter to return to the menu... ")
@@ -321,7 +454,7 @@ def run_menu(root: Path) -> int:
             modules = ", ".join(load_profile(repo).modules) or "(none)"
         except ProjectError:
             modules = "(unreadable profile)"
-        index = _choose_action(repo, modules)
+        index = _choose_action(repo, modules, _preferred_harness_label())
         if index is None:
             return 0
         action = ACTIONS[index]
@@ -329,5 +462,7 @@ def run_menu(root: Path) -> int:
             return 0
         if action.kind == "profile":
             _profile_flow(repo)
+        elif action.kind == "harness":
+            _harness_flow()
         else:
             _command_flow(repo, action)

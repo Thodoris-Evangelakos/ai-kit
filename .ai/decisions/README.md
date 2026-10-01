@@ -6,3 +6,4 @@ Place durable, accepted architectural decisions here. Git keeps the history.
 - [0002: Separate authority from working memory](0002-repository-authority-and-memory.md)
 - [0003: Project-owned verification and commit-bound goals](0003-project-verification-and-goal-evidence.md)
 - [0004: Conservative adoption and explicit file ownership](0004-safe-adoption-and-managed-files.md)
+- [0005: Harness-assisted setup with deterministic finalization](0005-harness-assisted-setup.md)
