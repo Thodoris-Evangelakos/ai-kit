@@ -1,7 +1,7 @@
 schema = 1
 id = "optmem"
 title = "Optional OptMem memory integration"
-state = "IMPLEMENTED"
+state = "DONE"
 intent = "Users can opt into shared OptMem memory with project-specific retrieval through AI Kit profiles."
 acceptance = [
   "The optmem module is selectable through init and the profile menu, disabled by default, and safely removable.",
@@ -12,3 +12,16 @@ acceptance = [
 
 [checks]
 "verify" = "./dev verify"
+
+[evidence]
+commit = "da7bb3fd1c9b3ebd6f1c009c1de3efa754ba8f5f"
+contract_sha256 = "7b056b263229b2b4f6032d378f62f5d48670ef3cd27f3f9e6058e9b9a1df7084"
+result = "pass"
+warnings = [
+  "Product code and acceptance assertions changed together in da7bb3fd1c9b: src/ai_kit/menu.py, src/ai_kit/project.py; tests/test_project.py",
+]
+
+[[evidence.results]]
+name = "verify"
+status = "pass"
+exit_code = 0
