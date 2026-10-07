@@ -33,6 +33,11 @@ ai-kit sync --check
 
 Use `--module learning`, `--module webapp`, or `--module professional-repository` to enable optional behavior. The professional module renders a GitHub Actions workflow that calls `./dev setup` then `./dev verify`. Full verification includes `./dev check`, which remains the fast local feedback command. The webapp module provides a focused browser-verification skill; the project must provide its actual Playwright acceptance command.
 
+`--module optmem` adds optional shared memory instructions for separately installed
+[OptMem](https://github.com/VictorTaelin/OptMem). Project tags make original notes
+searchable per repository. Enable or disable it through Profile modules in the
+menu; see [OptMem setup and retrieval](docs/usage.md#optional-optmem-memory).
+
 `sync` regenerates managed files from the profile. It checks hashes in `ai-kit.lock` and refuses to overwrite manual edits. `sync --check` and `doctor` return nonzero for drift or invalid state. Profile comments and formatting are left alone.
 
 ## Terminal menu

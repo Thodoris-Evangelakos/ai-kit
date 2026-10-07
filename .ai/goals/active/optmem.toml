@@ -1,7 +1,7 @@
 schema = 1
 id = "optmem"
 title = "Optional OptMem memory integration"
-state = "READY"
+state = "IMPLEMENTED"
 intent = "Users can opt into shared OptMem memory with project-specific retrieval through AI Kit profiles."
 acceptance = [
   "The optmem module is selectable through init and the profile menu, disabled by default, and safely removable.",

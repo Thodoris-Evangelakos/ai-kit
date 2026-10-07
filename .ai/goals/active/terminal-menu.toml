@@ -1,22 +1,23 @@
 schema = 1
-id = "post-mvp-hardening"
-title = "Harden the existing AI Kit MVP"
-state = "DONE"
-intent = "Make the existing MVP trustworthy and internally consistent as specified by the post-MVP hardening request and .ai/intent/AI-KIT-MVP.md, without expanding product scope."
+id = "terminal-menu"
+title = "Navigate AI Kit in the terminal"
+state = "IMPLEMENTED"
+intent = "Use an in-terminal selection interface to change profile modules and run common project actions without remembering their CLI commands."
 acceptance = [
-  "Product intent states outcomes; a small set of ADRs explains the existing architecture without changing its direction.",
-  "Generated CI runs setup and full verification once, pins all external actions to upstream-confirmed full commit SHAs with release comments, and keeps read-only permissions.",
-  "Self-hosting sync --check, doctor, and ./dev verify pass; managed hashes are correct; human-owned files are preserved; no adoption or custody artifacts are introduced.",
-  "An implementation branch and PR exercise remote setup and verification successfully when GitHub access permits; any access blocker or workflow product gap is recorded explicitly.",
-  "Tests cover meaningful workflow changes, current-state files remain concise, and browser verification, aggressive adoption, new adapters, and unrelated refactors remain out of scope.",
+  "Running ai-kit in an interactive terminal opens a keyboard-driven menu; ai-kit menu -C selects a repository, while help, existing commands, and noninteractive use remain available without hanging.",
+  "The menu shows the repository and active modules, supports arrow keys, space to toggle modules, Enter to apply, and cancellation without changes.",
+  "Applying profile modules updates the profile and generated files through existing safety checks; manual edits and symlinks are preserved or rejected with an actionable error, and sync --check is clean after success.",
+  "Menu actions provide goal status, doctor, managed-file sync, and project check/verify with visible output and honest failures, returning to the menu afterward.",
+  "Documentation explains starting, navigating, applying, and exiting the menu; automated checks and a real PTY exercise selection, persistence, cancellation, actions, and terminal restoration.",
 ]
 
 [checks]
+"terminal" = "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -q tests/test_menu.py"
 "verify" = "./dev verify"
 
 [evidence]
 commit = "6f45f36c4feb7ff78a2db04702a43a2d0725eb3c"
-contract_sha256 = "631952ec09b433d6a380970e9abd4b078fbe46ef5ba022068a4a6bc7e1e95804"
+contract_sha256 = "939c9df7399bb900f89fe2de46f6dd78ca4148b8c5f85b01dceb314b5aa1caf5"
 result = "pass"
 warnings = [
   "Acceptance contract and other files changed together in f632d64ff96e: .ai/current/FINDINGS.md, .ai/current/STATUS.md, .ai/decisions/0005-harness-assisted-setup.md, .ai/decisions/README.md, README.md, docs/usage.md, src/ai_kit/adoption.py, src/ai_kit/cli.py, src/ai_kit/harness.py, src/ai_kit/menu.py, src/ai_kit/project.py, src/ai_kit/setup.py, src/ai_kit/system.py, tests/test_adoption.py, tests/test_harness.py, tests/test_menu.py, tests/test_project.py, tests/test_setup.py, tests/test_setup_cli.py, tests/test_setup_final_review.py, tests/test_setup_review.py",
@@ -24,6 +25,11 @@ warnings = [
   "Product code and acceptance assertions changed together in c64399043e0f: src/ai_kit/adoption.py, src/ai_kit/setup.py; tests/test_setup_final_review.py",
   "Product code and acceptance assertions changed together in 6f45f36c4feb: src/ai_kit/project.py; tests/test_setup_final_review.py",
 ]
+
+[[evidence.results]]
+name = "terminal"
+status = "pass"
+exit_code = 0
 
 [[evidence.results]]
 name = "verify"

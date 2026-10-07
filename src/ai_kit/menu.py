@@ -33,6 +33,7 @@ _NOTES = {
     "strict-verification": "requires a verify check in every goal contract",
     "webapp": "requires acceptance and runtime_errors checks in every goal contract",
     "learning": "renders a private learning skill and .ai-local/learning/",
+    "optmem": "renders shared OptMem memory instructions; install OptMem separately",
     "professional-repository": "renders a GitHub Actions verify workflow",
 }
 _DECLARATIVE = MODULES - _NOTES.keys()

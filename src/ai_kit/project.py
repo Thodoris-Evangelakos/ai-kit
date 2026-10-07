@@ -35,6 +35,7 @@ MODULE_ORDER = (
     "research",
     "experimental",
     "security-sensitive",
+    "optmem",
 )
 MODULES = frozenset(MODULE_ORDER)
 
@@ -105,6 +106,40 @@ This repository has an AI Kit setup recorded in `ai-kit.lock`. If that record
 still marks the setup as **pending**, read `.ai/setup/protocol.md` and complete
 it before other work, then run `ai-kit setup --finalize`. Otherwise ignore this
 note.
+"""
+
+OPTMEM_INSTRUCTIONS = r"""## Memory
+
+OptMem provides optional shared memory through `~/.optmem/memo`. Its default
+store is `~/.optmem/memory`; honor `MEMORY_DIR` when set. Repository intent,
+accepted decisions, and goal contracts remain authoritative over memories.
+
+At startup, run `~/.optmem/memo wake` before other tool calls and read every
+output part. Follow its paging and compression instructions within project
+policy. If the tool or store is missing, report it, point to installation at
+https://github.com/VictorTaelin/OptMem, and continue repository work without
+installing anything automatically.
+
+Record useful, nonredundant discoveries with `~/.optmem/memo note "..."`:
+one line, at most 280 bytes including the project tag. Never record secrets.
+Prefix repository-specific notes with `[project:<host>/<owner>/<repo>]`, using
+the origin remote without credentials or a trailing `.git`. Without an origin,
+use `[project:<absolute repository root>]`. Keep the same tag across sessions;
+if the remote or path changes, search the old tag too. General user memories
+may be untagged. Preserve project tags when performing requested compression;
+complete pending merges with `~/.optmem/memo nap` before continuing.
+
+Use `~/.optmem/memo recall <regex>` to search original notes, escaping the
+project tag as a literal regex (for example,
+`~/.optmem/memo recall '\[project:github\.com/owner/repo\]'`). Original tagged
+notes remain searchable even when summaries omit tags. Use
+`~/.optmem/memo zoom <lo>-<hi>` to expand summaries and
+`~/.optmem/memo forget <lo>-<hi>` to invalidate a bad summary.
+Never directly edit or delete the memory store; OptMem manages it.
+
+If you are a subagent, skip OptMem entirely and never run `memo`. Tell delegated
+workers: "You are a subagent. Don't run memo."
+
 """
 
 MANAGE_GOAL = """---
@@ -224,7 +259,8 @@ def block_content(relative: str, profile: Profile, *, setup: bool = False) -> st
     if relative == "CLAUDE.md":
         body = CLAUDE_BRIDGE
     else:
-        body = ROUTER.rstrip("\n")
+        body = OPTMEM_INSTRUCTIONS if "optmem" in profile.modules else ""
+        body += ROUTER.rstrip("\n")
     if setup:
         body += SETUP_ROUTER_NOTE.rstrip("\n")
     return body
@@ -415,7 +451,7 @@ def load_profile(root: Path) -> Profile:
 
 def render_codex(profile: Profile) -> dict[str, str]:
     generated = {
-        "AGENTS.md": ROUTER,
+        "AGENTS.md": block_content("AGENTS.md", profile) + "\n",
         ".agents/skills/manage-goal/SKILL.md": MANAGE_GOAL,
         ".agents/skills/verify-goal/SKILL.md": VERIFY_GOAL,
     }

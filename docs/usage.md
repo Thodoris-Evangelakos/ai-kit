@@ -58,6 +58,49 @@ ai-kit sync                              # regenerate managed files
 ai-kit sync --check                      # report drift; nonzero on drift
 ```
 
+## Optional OptMem memory
+
+Install [OptMem](https://github.com/VictorTaelin/OptMem) separately using its
+upstream installer:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/VictorTaelin/OptMem/main/install.sh | sh
+ai-kit init --module strict-verification --module optmem
+```
+
+For an initialized repository, select `optmem` in the menu's Profile modules
+checklist. Alternatively, add `"optmem"` to `.ai/profile.toml`'s modules array
+and run `ai-kit sync`. AI Kit renders the memory instructions itself; do not
+paste the installer's block into AI Kit-managed instructions.
+
+OptMem is disabled by default. Enabling it only renders instructions: AI Kit
+does not install or execute `memo`, initialize storage, or read user memories.
+Agents use `~/.optmem/memo` and the shared `~/.optmem/memory` store, honoring
+`MEMORY_DIR` if set. If either tool or store is missing, agents report installation
+guidance and continue working. Repository requirements, decisions, and goal
+contracts remain authoritative over recalled memories.
+
+Project-specific notes carry `[project:<host>/<owner>/<repo>]`, derived from the
+origin remote without credentials or the trailing `.git`, for example
+`[project:github.com/acme/widget]`. Without an origin, use the absolute repository
+root as the identifier. Keep tags stable and preserve them when compressing;
+after a remote or path change, search both identifiers. Tags count toward the
+280-byte note limit. Never record secrets; general user memories can be untagged.
+
+```sh
+~/.optmem/memo note '[project:github.com/acme/widget] Full verification uses ./dev verify.'
+~/.optmem/memo recall '\[project:github\.com/acme/widget\]'
+```
+
+Recall accepts a regex, so escape tag punctuation for literal matching. It
+searches original notes even when compressed summaries omit a project tag.
+Project separation depends on agents consistently tagging notes; OptMem has
+no native project field. Subagents skip memory operations.
+
+Disable the module by unchecking it in the menu, or remove it from the profile
+and run `ai-kit sync`. This removes generated instructions and leaves all
+OptMem memories untouched. Normal managed-file drift protection still applies.
+
 ## Terminal menu
 
 Running `ai-kit` with no arguments at a Git repository root in an interactive terminal opens a

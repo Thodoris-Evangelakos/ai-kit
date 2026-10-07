@@ -211,3 +211,62 @@ def test_profile_module_change_preserves_pending_setup_metadata(tmp_path: Path) 
     assert after["blocks"] == before["blocks"]
     assert setup_status(root) == "pending"
     assert sync_project(root, check=True).clean
+
+
+@pytest.mark.parametrize("setup_managed", [False, True])
+def test_optmem_toggle_preserves_instructions_and_sync(tmp_path: Path, setup_managed: bool) -> None:
+    from ai_kit.menu import _DECLARATIVE, _NOTES
+    from ai_kit.project import ROUTER, block_content
+    from ai_kit.setup import prepare_setup
+
+    root = repo(tmp_path)
+    init_project(root)
+    agents = root / "AGENTS.md"
+    assert agents.read_text() == ROUTER
+    if setup_managed:
+        prepare_setup(root)
+        agents.write_text("# Human instructions\n\n" + agents.read_text())
+    before = agents.read_bytes()
+    assert not set_profile_modules(root, ("strict-verification", "optmem")).problems
+    content = agents.read_text()
+    assert content.index("## Memory") < content.index("# Project agent guide")
+    for instruction in (
+        "~/.optmem/memo wake",
+        "~/.optmem/memo note",
+        "280 bytes",
+        "MEMORY_DIR",
+        "[project:<host>/<owner>/<repo>]",
+        "absolute repository root",
+        "credentials",
+        "compression",
+        "~/.optmem/memo recall",
+        "subagent",
+        "authoritative",
+        "installation",
+    ):
+        assert instruction in content
+    recall_regex = re.search(r"memo recall '([^']+)'", content).group(1)
+    assert re.search(recall_regex, "[project:github.com/owner/repo] A useful fact.")
+    assert not re.search(recall_regex, "[project:github.com/owner/other] Another fact.")
+    assert "optmem" in _NOTES and "optmem" not in _DECLARATIVE
+    profile = load_profile(root)
+    assert block_content("CLAUDE.md", profile) == "@AGENTS.md"
+    assert "## Memory" in block_content("AGENTS.override.md", profile)
+    assert sync_project(root, check=True).clean
+    assert sync_project(root).clean
+    enabled = agents.read_bytes()
+    agents.write_text(agents.read_text().replace("## Memory", "## Edited memory"))
+    with pytest.raises(ProjectError, match="drift"):
+        set_profile_modules(root, ("strict-verification",))
+    agents.write_bytes(enabled)
+    assert not set_profile_modules(root, ("strict-verification",)).problems
+    assert agents.read_bytes() == before
+    assert sync_project(root, check=True).clean
+
+
+def test_init_accepts_optmem_module_without_installation(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    assert not init_project(root, modules=("optmem",)).problems
+    assert load_profile(root).modules == ("optmem",)
+    assert "## Memory" in (root / "AGENTS.md").read_text()
+    assert sync_project(root, check=True).clean
