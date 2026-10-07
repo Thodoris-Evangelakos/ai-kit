@@ -1,0 +1,14 @@
+schema = 1
+id = "optmem"
+title = "Optional OptMem memory integration"
+state = "READY"
+intent = "Users can opt into shared OptMem memory with project-specific retrieval through AI Kit profiles."
+acceptance = [
+  "The optmem module is selectable through init and the profile menu, disabled by default, and safely removable.",
+  "Legacy and setup-managed instruction generation describe wake, notes, compression, recall, project tags, subagent exclusion, and missing-install guidance while preserving repository authority and human bytes.",
+  "OptMem installation and memory storage remain external; generation and tests never execute memo or access user memories.",
+  "Documentation explains installation, enabling and disabling, shared storage, and project-specific retrieval.",
+]
+
+[checks]
+"verify" = "./dev verify"
