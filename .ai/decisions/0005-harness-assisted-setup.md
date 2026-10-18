@@ -21,7 +21,11 @@ bytes outside the block. Newly discovered baseline commands are measured against
 the captured original repository; inherited failing evidence cannot be discarded.
 
 Consequences: This extends ADRs 0001 and 0004 for the new setup entry point.
-Legacy init and safe adoption retain their existing semantics, and ADRs 0002
+Plain `adopt` uses the same agent-assisted setup flow by default. An absent or
+unavailable harness preference prompts for an installed choice; no available or
+selected agent requires explicit confirmation before deterministic safe adoption.
+Noninteractive callers must request `adopt --safe` explicitly.
+Legacy init and explicit safe adoption retain their existing semantics, and ADRs 0002
 and 0003 still govern authority and goal completion. Setup evidence is a local
 observation, not a tamper-proof attestation or a replacement for goal acceptance.
 Source repair and the broader native-task/standalone-verification migration remain

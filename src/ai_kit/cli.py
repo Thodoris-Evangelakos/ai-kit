@@ -399,13 +399,69 @@ def goal_reopen(
 
 @app.command()
 def adopt(
-    safe: bool = typer.Option(True, "--safe/--aggressive", help="Conservative adoption mode."),
+    safe: bool = typer.Option(False, "--safe", help="Adopt deterministically without an agent."),
+    aggressive: bool = typer.Option(False, "--aggressive", help="Unsupported source repair mode."),
     path: Path = typer.Option(Path("."), "--path", "-C", help="Git repository root."),
 ) -> None:
-    """Inspect an existing repository and record an honest baseline."""
+    """Adopt through the chosen agent, or explicitly use a conservative baseline."""
 
-    if not safe:
+    if aggressive:
         _fail("aggressive adoption is not implemented; use --safe", 2)
+    if not safe:
+        from .harness import (
+            HARNESS_CHOICES,
+            HarnessError,
+            _active_session,
+            get_configured_setup_harness,
+            harness_available,
+            set_setup_harness,
+        )
+        from .menu import interactive_ready
+        from .project import _root
+        from .setup import SetupError, setup_status
+
+        try:
+            root = _root(path)
+            if setup_status(root) == "completed":
+                setup(root, harness=None, no_launch=False, finalize=False)
+                return
+            if not interactive_ready():
+                _fail("adopt needs a terminal to choose an agent; use adopt --safe explicitly")
+            if _active_session() is not None:
+                _fail(
+                    "adopt is already inside an agent session; use setup --no-launch "
+                    "and follow its protocol here, or use adopt --safe"
+                )
+            selected = get_configured_setup_harness()
+            if selected is None or not harness_available(selected):
+                if selected is not None:
+                    out.print(f"Configured harness {selected!r} is not installed.")
+                available = [name for name in HARNESS_CHOICES if harness_available(name)]
+                selected = None
+                if available:
+                    out.print("Available harnesses: " + ", ".join(available))
+                    out.print("Choose 'none' if you do not want to use an agent.")
+                    while True:
+                        choice = typer.prompt("Choose a harness").strip().lower()
+                        if choice == "none":
+                            break
+                        if choice in available:
+                            set_setup_harness(choice)
+                            selected = choice
+                            break
+                        out.print("Choose " + ", ".join([*available, "none"]))
+            if selected is not None:
+                setup(root, harness=selected, no_launch=False, finalize=False)
+                return
+            out.print(
+                "No agent harness is available or selected. AI Kit will use adopt --safe "
+                "for deterministic inventory and baseline only. Once an agent is available, "
+                "run adopt again to finish agent-assisted integration."
+            )
+            if not typer.confirm("Continue with adopt --safe?", default=False):
+                raise typer.Exit(1)
+        except (HarnessError, SetupError, ProjectError, OSError, ValueError) as exc:
+            _fail(str(exc))
     from .adoption import adopt_safe, mark_managed
 
     try:

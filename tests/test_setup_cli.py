@@ -83,7 +83,8 @@ def test_setup_rejects_unknown_harness_and_conflicting_modes_before_writes(tmp_p
     assert not (root / ".ai").exists()
 
 
-def test_completed_setup_does_not_launch_again(tmp_path: Path) -> None:
+@pytest.mark.parametrize("command", ["setup", "adopt"])
+def test_completed_setup_does_not_launch_again(tmp_path: Path, command: str) -> None:
     from ai_kit.setup import finalize_setup, prepare_setup
     from test_setup import write_dev, write_report
 
@@ -94,15 +95,17 @@ def test_completed_setup_does_not_launch_again(tmp_path: Path) -> None:
     write_report(root)
     finalize_setup(root)
 
-    result = run_cli(root, config, "setup", "--no-launch")
+    arguments = ("setup", "--no-launch") if command == "setup" else ("adopt",)
+    result = run_cli(root, config, *arguments)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "already completed" in result.stdout
     assert "pending" not in result.stdout.lower()
 
 
 @pytest.mark.parametrize("name", ["codex", "codex_ds", "opencode", "claude"])
+@pytest.mark.parametrize("command", ["setup", "adopt"])
 def test_interactive_setup_runs_harness_and_independent_finalization(
-    tmp_path: Path, name: str
+    tmp_path: Path, name: str, command: str
 ) -> None:
     import json
 
@@ -138,7 +141,13 @@ def test_interactive_setup_runs_harness_and_independent_finalization(
     )
     for marker in (*ACTIVE_AGENT_MARKERS, "AI_KIT_SETUP_ACTIVE"):
         env.pop(marker, None)
-    session = PtySession(root, "setup", "--harness", name, env=env)
+    if command == "adopt":
+        saved = run_cli(root, config, "harness", name)
+        assert saved.returncode == 0, saved.stderr
+        arguments = ("adopt",)
+    else:
+        arguments = ("setup", "--harness", name)
+    session = PtySession(root, *arguments, env=env)
     try:
         session.expect("Setup harness stub completed.")
         session.expect("AI Kit setup verified.")
@@ -155,6 +164,6 @@ def test_interactive_setup_runs_harness_and_independent_finalization(
     if name == "opencode":
         assert arguments[0] == "--prompt"
     assert ".ai/setup/protocol.md" in arguments[-1]
-    assert not config.exists()
+    assert config.exists() == (command == "adopt")
     assert session.after is not None
     assert session.after[:4] == session.before[:4]

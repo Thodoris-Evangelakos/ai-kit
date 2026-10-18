@@ -53,6 +53,7 @@ Each action restores the terminal, runs the real command, prints its output and 
 ## Harness-assisted setup
 
 ```sh
+ai-kit adopt                # adopt an existing repo using your chosen agent
 ai-kit harness              # show your preference and executable availability
 ai-kit harness opencode     # save a user-wide preference
 ai-kit setup                # prepare or resume setup, then open the harness
@@ -60,6 +61,13 @@ ai-kit setup --harness claude  # override the harness for this run
 ai-kit setup --no-launch    # prepare a manual handoff without opening a session
 ai-kit setup --finalize     # independently validate the integration
 ```
+
+`adopt` opens the configured harness automatically. If no harness is configured
+or the configured executable is unavailable, it asks you to choose an installed
+harness and saves that preference. If none is available or you choose `none`,
+it explains the deterministic `adopt --safe` fallback and asks for confirmation
+(default: no). Run `adopt` again once an agent is available. Noninteractive
+callers must use `adopt --safe` explicitly; no fallback is silently accepted.
 
 The menu's Setup harness selector saves the same preference in `$XDG_CONFIG_HOME/ai-kit/config.toml` (default `~/.config/ai-kit/config.toml`). Enter saves; Esc cancels. Saving a choice never launches it. Unavailable executables are labelled and may be selected for installation later.
 

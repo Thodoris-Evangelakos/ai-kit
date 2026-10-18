@@ -127,17 +127,24 @@ def get_setup_harness() -> str:
     selection, unreadable file, or symlinked path raises :class:`HarnessError`.
     """
 
+    return get_configured_setup_harness() or DEFAULT_HARNESS
+
+
+def get_configured_setup_harness() -> str | None:
+    """Return an explicit preference, or None when the user has not chosen one."""
+
     path = _config_path()
     _refuse_symlinks(path)
     if not path.exists():
-        return DEFAULT_HARNESS
+        return None
     if path.is_dir():
         raise HarnessError(f"config path is a directory: {path}")
     try:
         text = read_text_exact(path)
     except OSError as exc:
         raise HarnessError(f"cannot read {path}: {exc}") from exc
-    return _selected_harness(path, _parse_config(path, text))
+    data = _parse_config(path, text)
+    return _selected_harness(path, data) if "setup_harness" in data else None
 
 
 def set_setup_harness(name: str) -> bool:
@@ -166,7 +173,7 @@ def set_setup_harness(name: str) -> bool:
             raise HarnessError(f"cannot read {path}: {exc}") from exc
         data = _parse_config(path, original)
         current = _selected_harness(path, data)
-        if current == name:
+        if "setup_harness" in data and current == name:
             return False
         updated = (
             _replace_harness_text(original, name)

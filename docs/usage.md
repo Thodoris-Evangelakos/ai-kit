@@ -203,12 +203,24 @@ current Git commit. `complete` refuses absent, failed, unknown, or stale
 evidence. A later product commit makes a DONE goal's evidence stale; run
 `ai-kit goal reopen ID` to move it back for fresh verification.
 
-## Safe adoption
+## Adoption
 
 ```sh
+ai-kit adopt              # open your chosen harness for agent-assisted adoption
 ai-kit adopt --safe       # inventory an existing repo and record a baseline
 ai-kit baseline compare   # rerun the inherited check, report regressions
 ```
+
+Plain `adopt` reuses the setup preparation, agent protocol, and independent
+finalization. It uses your saved harness preference; without an installed
+preference it asks you to choose an available harness and saves your choice.
+You can choose `none`. If no harness is available or selected, AI Kit explains
+that it will use `adopt --safe` until an agent becomes available and asks whether
+to continue (default: no). Declining or cancelling leaves the repository alone.
+Run `adopt` again once an agent is available to finish integration. In scripts
+or CI, specify `--safe` explicitly; plain `adopt` requires an interactive terminal.
+Inside an agent session, use `setup --no-launch` and follow its protocol in that
+session instead of spawning another harness.
 
 Safe adoption invents nothing: failed checks stay failed and unknown checks
 stay unknown, and it does not repair source code. If confinement is
