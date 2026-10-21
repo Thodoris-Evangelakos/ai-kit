@@ -2,7 +2,7 @@
 
 AI Kit makes a repository legible, reproducible, and verifiable to a fresh coding agent. It keeps approved intent, accepted decisions, temporary working state, and goal acceptance evidence in separate places.
 
-The MVP is Linux first and Python 3.11+. It uses Git for history and project-owned commands for verification. Setup can open Codex, `codex_ds`, OpenCode, or Claude Code with your existing harness configuration. It has no daemon, web UI, or service dependency.
+AI Kit supports Linux and Windows with Python 3.11+ and Git. It uses Git for history and project-owned commands for verification. Setup can open Codex, `codex_ds`, OpenCode, or Claude Code with your existing harness configuration. It has no daemon, web UI, or service dependency.
 
 See [docs/usage.md](docs/usage.md) for a concise guide to installing, initializing, setting up a project, verifying goals, and adopting an existing repository.
 
@@ -16,6 +16,30 @@ uv tool install /path/to/ai-kit
 ```
 
 An editable global development install is also possible with `uv tool install --editable .`.
+
+On Windows, install Python, Git, and uv, then use PowerShell or Command Prompt:
+
+```powershell
+uv tool install --editable .
+.\dev.cmd setup
+.\dev.cmd check
+```
+
+The terminal menu installs its Windows curses dependency automatically and does
+not require `TERM`. New projects get a Python `dev` starter and a `dev.cmd`
+launcher; run `.\dev.cmd check` and `.\dev.cmd verify` on Windows. Existing
+project commands are preserved. The menu can run an inherited shell `dev`
+through Git for Windows, or use a project-owned `dev.cmd`.
+
+Goal check strings use the platform shell: `/bin/sh` on Linux and `cmd.exe` on
+Windows. Use Windows command syntax in contracts executed there. Configuration
+keeps the same XDG overrides and `~/.config/ai-kit/config.toml` default on both
+platforms.
+
+Confined adoption and setup verification require Linux Landlock. On Windows,
+safe adoption records UNKNOWN without executing inherited checks, and setup
+preparation and harness launch work but finalization remains pending. Run those
+workflows in a Linux environment; Windows never substitutes unconfined execution.
 
 ## Start a project
 
@@ -31,7 +55,7 @@ ai-kit sync --check
 
 `init` targets the current working directory by default; `--path` / `-C` remain compatible for targeting another path. The resolved target must be a Git repository root. It creates a small `AGENTS.md`, `.ai/profile.toml`, current-state files, two Codex skills, `ai-kit.lock`, an ignored `.ai-local/` area, and a `./dev` starter. Replace the starter's failing `setup`, `check`, and `verify` commands with real commands for that project before claiming completion. The `dev` file is project-owned; AI Kit does not regenerate it.
 
-Use `--module learning`, `--module webapp`, or `--module professional-repository` to enable optional behavior. The professional module renders a GitHub Actions workflow that calls `./dev setup` then `./dev verify`. Full verification includes `./dev check`, which remains the fast local feedback command. The webapp module provides a focused browser-verification skill; the project must provide its actual Playwright acceptance command.
+Use `--module learning`, `--module webapp`, or `--module professional-repository` to enable optional behavior. The professional module renders a GitHub Actions workflow for Linux and Windows, using `./dev` or `./dev.cmd` for setup and verification. Full verification includes `./dev check`, which remains the fast local feedback command. The webapp module provides a focused browser-verification skill; the project must provide its actual Playwright acceptance command.
 
 `--module optmem` adds optional shared memory instructions for separately installed
 [OptMem](https://github.com/VictorTaelin/OptMem). Project tags make original notes
@@ -48,7 +72,7 @@ The main screen shows the repository, enabled modules, and preferred setup harne
 
 Profile modules opens a checklist of every supported module. Space toggles the highlighted module, Enter applies the selection, and Esc or `q` cancels without changing anything. Modules whose behavior is still declarative are labelled so a choice is not misleading, and the footer explains the current effect of `strict-verification` (a `verify` check in every goal contract) and `webapp` (acceptance and runtime-error checks). Applying re-renders managed files and the lock through the same safety checks as `sync`: comments and non-module formatting are preserved, selecting the current set is a no-op, and manual drift, symlinks, or unmanaged collisions are refused before anything is written.
 
-Each action restores the terminal, runs the real command, prints its output and true exit status, and waits for Enter before returning to the menu. A failed command is shown as failed rather than passed. On a terminal that is too small, or when `TERM` is `dumb` or unset, the menu shows a clear message instead of a broken screen.
+Each action restores the terminal, runs the real command, prints its output and true exit status, and waits for Enter before returning to the menu. A failed command is shown as failed rather than passed. On a terminal that is too small, or when `TERM` is `dumb` (or unset on Unix), the menu shows a clear message instead of a broken screen.
 
 ## Harness-assisted setup
 

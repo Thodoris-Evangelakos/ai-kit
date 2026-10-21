@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 from ai_kit import __version__
-from ai_kit.system import GitRepository, GitStatus, UnsafeWriteError, atomic_write_text
+from ai_kit.system import GitRepository, GitStatus, UnsafeWriteError, atomic_write_text, is_link
 
 EvidenceState = Literal["CLAIMED", "OBSERVED", "INFERRED", "UNKNOWN"]
 CheckStatus = Literal["pass", "fail", "unknown"]
@@ -121,7 +121,7 @@ def compare_baseline(
 
 
 def _check_target(path: Path) -> None:
-    if path.is_symlink() or path.exists():
+    if is_link(path) or path.exists():
         raise UnsafeWriteError(f"refusing to overwrite existing adoption artifact {path}")
 
 
@@ -146,7 +146,7 @@ def _inventory(root: Path, head: str, dirty: bool) -> list[Evidence]:
             Evidence("INFERRED", "Repository appears to contain Node code", "package.json")
         )
     readme = root / "README.md"
-    if readme.is_file() and not readme.is_symlink():
+    if readme.is_file() and not is_link(readme):
         for line in readme.read_text(encoding="utf-8", errors="replace").splitlines():
             if (
                 re.search(r"(?<!\w)(?:npm test|pytest|\./dev (?:check|verify))\b", line)
@@ -164,10 +164,11 @@ def _inventory(root: Path, head: str, dirty: bool) -> list[Evidence]:
 
 
 def _command(root: Path) -> tuple[str, tuple[str, ...] | None, str]:
-    dev = root / "dev"
-    if dev.is_file() and not dev.is_symlink():
+    name = "dev.cmd" if sys.platform == "win32" and (root / "dev.cmd").exists() else "dev"
+    dev = root / name
+    if dev.is_file() and not is_link(dev):
         if os.access(dev, os.X_OK):
-            return "verify", ("./dev", "verify"), "Project verification command"
+            return "verify", (f"./{name}", "verify"), "Project verification command"
         return "verify", None, "dev exists but is not executable"
 
     tests = root / "tests"
@@ -182,7 +183,7 @@ def _command(root: Path) -> tuple[str, tuple[str, ...] | None, str]:
         return "unit", None, "pytest is unavailable in the current Python environment"
 
     package = root / "package.json"
-    if package.is_file() and not package.is_symlink():
+    if package.is_file() and not is_link(package):
         try:
             script = json.loads(package.read_text(encoding="utf-8")).get("scripts", {}).get("test")
         except (ValueError, AttributeError):
@@ -202,11 +203,11 @@ def _copy_for_check(root: Path, destination: Path) -> None:
     shutil.copytree(root, destination, symlinks=True, ignore=ignored)
     # A linked worktree's .git file points outside the copy. Give checks local metadata.
     git_pointer = destination / ".git"
-    if git_pointer.is_file() or git_pointer.is_symlink():
+    if git_pointer.is_file() or is_link(git_pointer):
         git_pointer.unlink()
         subprocess.run(["git", "init", "-q", str(destination)], check=True, capture_output=True)
     for path in destination.rglob("*"):
-        if path.is_symlink() and not path.resolve().is_relative_to(destination):
+        if is_link(path) and not path.resolve().is_relative_to(destination):
             raise ValueError(f"verification copy contains an external symlink: {path}")
 
 
@@ -253,6 +254,10 @@ def _enforce_landlock(libc: ctypes.CDLL, restrict: int, ruleset_fd: int) -> None
 
 
 def _run_check(root: Path, command: tuple[str, ...], timeout: float) -> CheckResult:
+    if sys.platform != "linux":
+        return CheckResult(
+            "unknown", command, None, "", "Landlock unavailable: confined checks require Linux"
+        )
     with tempfile.TemporaryDirectory(prefix="ai-kit-adopt-") as temporary:
         copy = Path(temporary) / "repo"
         try:
@@ -367,8 +372,7 @@ def adopt_safe(
     if repository is None or repository.root != root:
         raise ValueError(f"{root} is not a Git repository root")
     if any(
-        path.exists() or path.is_symlink()
-        for path in (root / "ai-kit.lock", root / ".ai/profile.toml")
+        path.exists() or is_link(path) for path in (root / "ai-kit.lock", root / ".ai/profile.toml")
     ):
         raise ValueError("repository already has AI Kit management files; use sync")
     source = repository.status()
@@ -380,7 +384,7 @@ def adopt_safe(
 
     ai = root / ".ai"
     adoption = ai / "adoption"
-    if ai.is_symlink() or adoption.is_symlink():
+    if is_link(ai) or is_link(adoption):
         raise UnsafeWriteError("refusing to write through a symlinked .ai directory")
     if (ai.exists() and not ai.is_dir()) or (adoption.exists() and not adoption.is_dir()):
         raise UnsafeWriteError("refusing to write through a non-directory .ai path")
@@ -503,9 +507,9 @@ def _stored_check(value: object) -> CheckResult:
 
 
 def _recognized_check(root: Path, command: tuple[str, ...]) -> bool:
-    if command == ("./dev", "verify"):
-        dev = root / "dev"
-        return dev.is_file() and not dev.is_symlink() and os.access(dev, os.X_OK)
+    if command in (("./dev", "verify"), ("./dev.cmd", "verify")):
+        dev = root / command[0]
+        return dev.is_file() and not is_link(dev) and os.access(dev, os.X_OK)
     if command == ("node", "--test"):
         return shutil.which("node") is not None
     return (
@@ -524,7 +528,7 @@ def recheck_baseline(root: Path, *, timeout: float = 60) -> BaselineComparison:
     if repository is None or repository.root != root:
         raise ValueError(f"{root} is not a Git repository root")
     path = root / ".ai/baseline.json"
-    if path.is_symlink():
+    if is_link(path):
         raise UnsafeWriteError(f"refusing symlinked baseline {path}")
     baseline = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(baseline, dict) or baseline.get("schema") != 1:
@@ -585,7 +589,7 @@ def mark_managed(result: AdoptionResult) -> Path:
     """Mark custody complete after the caller has installed AI Kit files."""
 
     path = result.custody_path
-    if path.is_symlink():
+    if is_link(path):
         raise UnsafeWriteError(f"refusing to update symlinked custody marker {path}")
     content = path.read_text(encoding="utf-8")
     custody = tomllib.loads(content)

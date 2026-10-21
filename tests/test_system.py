@@ -324,11 +324,12 @@ def test_atomic_write_preserves_file_mode(tmp_path: Path) -> None:
     target = tmp_path / "script.sh"
     atomic_write_text(target, "#!/bin/sh\n")
     os.chmod(target, 0o750)
+    original_mode = stat.S_IMODE(target.stat().st_mode)
     digest = sha256_file(target)
 
     atomic_write_text(target, "#!/bin/sh\necho hi\n", expected_digest=digest)
 
-    assert stat.S_IMODE(target.stat().st_mode) == 0o750
+    assert stat.S_IMODE(target.stat().st_mode) == original_mode
 
 
 def test_atomic_write_refuses_directory_target(tmp_path: Path) -> None:
@@ -339,6 +340,7 @@ def test_atomic_write_refuses_directory_target(tmp_path: Path) -> None:
         atomic_write_text(target, "content\n")
 
 
+@pytest.mark.usefixtures("symlinks")
 def test_atomic_write_refuses_symlink_target(tmp_path: Path) -> None:
     original = tmp_path / "original"
     original.write_text("human work\n")

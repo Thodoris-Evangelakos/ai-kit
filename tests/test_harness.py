@@ -83,7 +83,25 @@ def make_stub(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     executable = bin_dir / name
-    executable.write_text(STUB_SCRIPT)
+    if sys.platform == "win32":
+        script = bin_dir / f"{name}.py"
+        script.write_text(
+            "import os, sys\nfrom pathlib import Path\n"
+            "if sys.argv[1:] == ['--help']:\n"
+            "    print(os.environ['AI_KIT_STUB_HELP'])\n"
+            "    sys.exit(int(os.environ['AI_KIT_STUB_HELP_EXIT']))\n"
+            "log = Path(os.environ['AI_KIT_STUB_DIR'])\n"
+            "(log / 'argv').write_text('\\n'.join([str(Path(__file__).with_suffix('.cmd')), "
+            "*sys.argv[1:]]))\n"
+            "(log / 'cwd').write_text(os.getcwd())\n"
+            "(log / 'marker').write_text(os.environ.get('AI_KIT_SETUP_ACTIVE', '<unset>'))\n"
+            "(log / 'retained').write_text(os.environ.get('AI_KIT_RETAINED', '<unset>'))\n"
+            "sys.exit(int(os.environ['AI_KIT_STUB_EXIT']))\n"
+        )
+        executable = executable.with_suffix(".cmd")
+        executable.write_text(f'@echo off\n"{sys.executable}" "{script}" %*\n')
+    else:
+        executable.write_text(STUB_SCRIPT)
     executable.chmod(0o755)
     log_dir = tmp_path / "log"
     log_dir.mkdir(exist_ok=True)
@@ -204,6 +222,7 @@ def test_set_rejects_invalid_toml(tmp_path: Path) -> None:
         set_setup_harness("opencode")
 
 
+@pytest.mark.usefixtures("symlinks")
 def test_set_and_get_reject_symlinked_config_file(tmp_path: Path) -> None:
     target = tmp_path / "real.toml"
     target.write_text('setup_harness = "codex"\n')
@@ -218,6 +237,7 @@ def test_set_and_get_reject_symlinked_config_file(tmp_path: Path) -> None:
     assert target.read_text() == 'setup_harness = "codex"\n'
 
 
+@pytest.mark.usefixtures("symlinks")
 def test_set_rejects_symlinked_ancestor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     real = tmp_path / "real-config"
     real.mkdir()
@@ -444,3 +464,13 @@ def test_prompt_uses_repository_relative_protocol_path(
     prompt = (tmp_path / "log" / "argv").read_text().splitlines()[1]
     assert "docs/plan/setup.md" in prompt
     assert str(root) not in prompt
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows batch argument expansion")
+def test_batch_harness_preserves_special_characters_in_paths(tmp_path, monkeypatch):
+    force_tty(monkeypatch)
+    make_stub(tmp_path, monkeypatch)
+    protocol = tmp_path / "docs" / "O'Brien & %PATH% ! plan.md"
+    assert launch_setup_harness(tmp_path, "codex", protocol) == 0
+    prompt = (tmp_path / "log/argv").read_text().splitlines()[1]
+    assert "docs/O'Brien & %PATH% ! plan.md" in prompt

@@ -8,6 +8,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 
 def git(root: Path, *args: str) -> str:
     result = subprocess.run(
@@ -64,7 +66,8 @@ def test_greenfield_goal_gate_and_stale_commit(tmp_path: Path) -> None:
     cli(root, "doctor")
     commit(root, "Initial project", ".")
 
-    command = f"{shlex.quote(sys.executable)} -B -c 'from app import value; assert value() == 42'"
+    argv = [sys.executable, "-B", "-c", "from app import value; assert value() == 42"]
+    command = subprocess.list2cmdline(argv) if sys.platform == "win32" else shlex.join(argv)
     cli(
         root,
         "goal",
@@ -111,6 +114,7 @@ def test_greenfield_goal_gate_and_stale_commit(tmp_path: Path) -> None:
     assert (root / ".ai/goals/active/value-42.toml").is_file()
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_safe_adoption_preserves_failing_evidence(tmp_path: Path) -> None:
     root = tmp_path / "brownfield"
     root.mkdir()
@@ -178,4 +182,4 @@ def test_init_targets_cwd_and_keeps_path_flags(tmp_path: Path) -> None:
     # The target must still be a Git repository root.
     nested = root / "nested"
     nested.mkdir()
-    assert "is not a Git" in cli(root, "init", str(nested), exit_code=1)
+    assert "is not a Git" in " ".join(cli(root, "init", str(nested), exit_code=1).split())

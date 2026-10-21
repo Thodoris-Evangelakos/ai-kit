@@ -14,9 +14,10 @@ from .system import (
     GitRepository,
     UnsafeWriteError,
     atomic_write_text,
+    is_link,
     read_text_exact,
     sha256_file,
-    sha256_text,
+    sha256_managed_text,
 )
 
 PROFILE_SCHEMA = 1
@@ -208,7 +209,10 @@ permissions:
   contents: read
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -217,22 +221,19 @@ jobs:
         with:
           version: "0.12.13"
       - name: Setup
-        run: ./dev setup
+        run: ${{ runner.os == 'Windows' && './dev.cmd setup' || './dev setup' }}
       - name: Verify
-        run: ./dev verify
+        run: ${{ runner.os == 'Windows' && './dev.cmd verify' || './dev verify' }}
 """
 
-DEV_STUB = """#!/bin/sh
-set -eu
-case "${1:-}" in
-  setup|check|verify)
-    echo "./dev $1 is unconfigured; add this project's real checks before claiming success" >&2
-    exit 2 ;;
-  *)
-    echo "usage: ./dev {setup|check|verify}" >&2
-    exit 2 ;;
-esac
+DEV_STUB = """#!/usr/bin/env python3
+import sys
+
+print("./dev is unconfigured; add this project's real checks", file=sys.stderr)
+sys.exit(2)
 """
+
+DEV_CMD = '@echo off\r\npython "%~dp0dev" %*\r\nexit /b %errorlevel%\r\n'
 
 # Hash-managed instruction blocks. AI Kit only ever rewrites the bytes between
 # these markers; everything else in an instruction file is human-owned.
@@ -276,7 +277,9 @@ def _block_bounds(text: str, relative: str) -> tuple[int, int] | None:
             f"{relative}: ambiguous AI Kit block markers; resolve the collision manually"
         )
     end = ends[0] + len(BLOCK_END)
-    if text[end : end + 1] == "\n":
+    if text.startswith("\r\n", end):
+        end += 2
+    elif text[end : end + 1] == "\n":
         # A managed block always ends its own line; including the newline keeps
         # removal byte-exact so surrounding human bytes are preserved verbatim.
         end += 1
@@ -307,6 +310,8 @@ def apply_managed_block(text: str, relative: str, content: str) -> str:
     if bounds is None:
         # Prepend so that removing ``[start:end]`` reproduces the original text.
         return block + text
+    if text.startswith(BLOCK_BEGIN + "\r\n", bounds[0]):
+        block = block.replace("\n", "\r\n")
     return text[: bounds[0]] + block + text[bounds[1] :]
 
 
@@ -429,7 +434,7 @@ def _replace_profile_modules(text: str, modules: tuple[str, ...]) -> str:
 
 def load_profile(root: Path) -> Profile:
     path = root / ".ai/profile.toml"
-    if (root / ".ai").is_symlink() or path.is_symlink():
+    if is_link(root / ".ai") or is_link(path):
         raise ProjectError(f"refusing symlinked profile: {path}")
     try:
         data = tomllib.loads(path.read_text())
@@ -506,7 +511,7 @@ def _lock_text(
 
 def load_lock(root: Path) -> Lock:
     path = root / "ai-kit.lock"
-    if path.is_symlink():
+    if is_link(path):
         raise ProjectError(f"refusing symlinked lock: {path}")
     try:
         data = tomllib.loads(path.read_text())
@@ -582,9 +587,9 @@ def load_lock(root: Path) -> Lock:
 
 def _managed_path(root: Path, relative: str) -> Path:
     path = root / relative
-    if Path(relative).is_absolute() or ".." in Path(relative).parts or path.is_symlink():
+    if Path(relative).is_absolute() or ".." in Path(relative).parts or is_link(path):
         raise ProjectError(f"unsafe managed path in lock: {relative}")
-    if any(parent.is_symlink() for parent in path.parents if parent != root.parent):
+    if any(is_link(parent) for parent in path.parents if parent != root.parent):
         raise ProjectError(f"symlink in managed path: {relative}")
     return path
 
@@ -599,14 +604,14 @@ def _sync_plan(root: Path, rendered: dict[str, str], lock: Lock | None) -> SyncR
             if not path.is_file():
                 problems.append(f"managed file missing: {relative}")
                 continue
-            actual = sha256_file(path)
+            actual = sha256_managed_text(read_text_exact(path))
             if actual != old[relative]:
                 problems.append(f"manual drift: {relative} ({actual}, expected {old[relative]})")
                 continue
         elif path.exists():
             problems.append(f"unmanaged file blocks generation: {relative}")
             continue
-        desired = sha256_text(rendered[relative]) if relative in rendered else None
+        desired = sha256_managed_text(rendered[relative]) if relative in rendered else None
         if old.get(relative) != desired:
             changes.append(f"{'remove' if desired is None else 'write'} {relative}")
     return SyncResult(tuple(changes), tuple(problems))
@@ -617,11 +622,11 @@ def _local_sync_plan(root: Path, modules: tuple[str, ...]) -> SyncResult:
 
     changes: list[str] = []
     problems: list[str] = []
-    if (root / ".ai-local").is_symlink():
+    if is_link(root / ".ai-local"):
         problems.append("symlinked .ai-local path")
     learning = root / ".ai-local/learning"
-    if "learning" in modules and (not learning.is_dir() or learning.is_symlink()):
-        if learning.exists() or learning.is_symlink():
+    if "learning" in modules and (not learning.is_dir() or is_link(learning)):
+        if learning.exists() or is_link(learning):
             problems.append("invalid .ai-local/learning path")
         else:
             changes.append("create .ai-local/learning")
@@ -630,7 +635,7 @@ def _local_sync_plan(root: Path, modules: tuple[str, ...]) -> SyncResult:
 
 def _desired_blocks(profile: Profile, lock: Lock) -> dict[str, str]:
     return {
-        relative: sha256_text(
+        relative: sha256_managed_text(
             managed_block(block_content(relative, profile, setup=lock.setup is not None))
         )
         for relative in lock.blocks
@@ -657,7 +662,7 @@ def _block_sync_plan(root: Path, profile: Profile, lock: Lock) -> SyncResult:
                 f"managed block missing: {relative}; restore it or run setup to reconcile"
             )
             continue
-        actual = sha256_text(text[bounds[0] : bounds[1]])
+        actual = sha256_managed_text(text[bounds[0] : bounds[1]])
         if actual != lock.blocks[relative]:
             problems.append(f"managed block drift: {relative}")
             continue
@@ -697,11 +702,11 @@ def sync_project(root: Path, *, check: bool = False) -> SyncResult:
         plan = SyncResult(
             (*plan.changes, *block_plan.changes), (*plan.problems, *block_plan.problems)
         )
-    profile_digest = sha256_file(root / ".ai/profile.toml")
+    profile_digest = sha256_managed_text(read_text_exact(root / ".ai/profile.toml"))
     desired_blocks = _desired_blocks(profile, lock) if block_mode else None
     desired_lock = _lock_text(
         profile_digest,
-        {path: sha256_text(content) for path, content in rendered.items()},
+        {path: sha256_managed_text(content) for path, content in rendered.items()},
         blocks=desired_blocks,
         setup=lock.setup,
         schema=lock.schema,
@@ -719,16 +724,17 @@ def sync_project(root: Path, *, check: bool = False) -> SyncResult:
         if relative not in rendered:
             path.unlink()
         elif relative in lock.generated:
-            if sha256_text(rendered[relative]) != lock.generated[relative]:
-                atomic_write_text(
-                    path, rendered[relative], expected_digest=lock.generated[relative]
-                )
+            if sha256_managed_text(rendered[relative]) != lock.generated[relative]:
+                original = read_text_exact(path)
+                if sha256_managed_text(original) != lock.generated[relative]:
+                    raise UnsafeWriteError(f"managed file changed during sync: {relative}")
+                atomic_write_text(path, rendered[relative], expected_content=original)
         else:
             atomic_write_text(path, rendered[relative])
     if block_mode:
         _apply_blocks(root, profile, lock)
     lock_path = root / "ai-kit.lock"
-    atomic_write_text(lock_path, desired_lock, expected_content=lock_path.read_text())
+    atomic_write_text(lock_path, desired_lock, expected_content=read_text_exact(lock_path))
     return SyncResult(plan.changes, ())
 
 
@@ -759,7 +765,7 @@ def set_profile_modules(root: Path, modules: tuple[str, ...] | list[str]) -> Syn
         return SyncResult((), ())
     ordered = tuple(name for name in MODULE_ORDER if name in requested)
     path = root / ".ai/profile.toml"
-    original = path.read_text()
+    original = read_text_exact(path)
     updated = _replace_profile_modules(original, ordered)
     try:
         data = tomllib.loads(updated)
@@ -796,7 +802,7 @@ def set_profile_modules(root: Path, modules: tuple[str, ...] | list[str]) -> Syn
 
 
 def _create(path: Path, content: str) -> bool:
-    if path.exists() or path.is_symlink():
+    if path.exists() or is_link(path):
         return False
     atomic_write_text(path, content)
     return True
@@ -806,9 +812,9 @@ def preflight_adoption(root: Path) -> None:
     """Check whether safe custody can install AI Kit before writing artifacts."""
 
     root = _root(root)
-    if (root / ".ai").exists() or (root / ".ai").is_symlink():
+    if (root / ".ai").exists() or is_link(root / ".ai"):
         raise ProjectError(".ai already exists; inspect it before adoption")
-    if (root / "ai-kit.lock").exists() or (root / "ai-kit.lock").is_symlink():
+    if (root / "ai-kit.lock").exists() or is_link(root / "ai-kit.lock"):
         raise ProjectError("ai-kit.lock already exists; use doctor or sync")
     profile = Profile(PROFILE_SCHEMA, "software", ("strict-verification",))
     plan = _sync_plan(root, render_codex(profile), None)
@@ -816,8 +822,8 @@ def preflight_adoption(root: Path) -> None:
         raise ProjectError(
             "adoption install would overwrite user work: " + "; ".join(plan.problems)
         )
-    if any((root / name).is_symlink() for name in (".gitignore", "dev", ".ai-local")):
-        raise ProjectError("refusing symlinked .gitignore, dev, or .ai-local")
+    if any(is_link(root / name) for name in (".gitignore", "dev", "dev.cmd", ".ai-local")):
+        raise ProjectError("refusing symlinked .gitignore, dev, dev.cmd, or .ai-local")
 
 
 def init_project(
@@ -829,20 +835,20 @@ def init_project(
     root = _root(root)
     if len(set(modules)) != len(modules) or set(modules) - MODULES:
         raise ProjectError(f"duplicate or unsupported modules: {modules!r}")
-    if (root / "ai-kit.lock").is_symlink():
+    if is_link(root / "ai-kit.lock"):
         raise ProjectError("refusing symlinked ai-kit.lock")
     if (root / "ai-kit.lock").exists():
         return sync_project(root)
     profile_path = root / ".ai/profile.toml"
     ai = root / ".ai"
-    if ai.is_symlink() or profile_path.is_symlink():
+    if is_link(ai) or is_link(profile_path):
         raise ProjectError("refusing symlinked .ai path")
     if adopted:
         allowed = {"baseline.json", "CUSTODY.toml", "adoption"}
         if not ai.is_dir() or {item.name for item in ai.iterdir()} != allowed:
             raise ProjectError("adoption artifacts are missing or .ai contains unknown files")
         adoption = ai / "adoption"
-        if adoption.is_symlink() or {item.name for item in adoption.iterdir()} != {"inventory.md"}:
+        if is_link(adoption) or {item.name for item in adoption.iterdir()} != {"inventory.md"}:
             raise ProjectError("adoption inventory is missing or contains unknown files")
     elif profile_path.exists() or ai.exists():
         raise ProjectError(
@@ -853,8 +859,8 @@ def init_project(
     plan = _sync_plan(root, rendered, None)
     if plan.problems:
         return plan
-    if any((root / name).is_symlink() for name in (".gitignore", "dev", ".ai-local")):
-        raise ProjectError("refusing symlinked .gitignore, dev, or .ai-local")
+    if any(is_link(root / name) for name in (".gitignore", "dev", "dev.cmd", ".ai-local")):
+        raise ProjectError("refusing symlinked .gitignore, dev, dev.cmd, or .ai-local")
     created: list[str] = []
     _create(profile_path, _profile_text(modules))
     created.append(".ai/profile.toml")
@@ -880,7 +886,7 @@ def init_project(
     if "learning" in modules:
         (root / ".ai-local/learning").mkdir(parents=True, exist_ok=True)
     ignore = root / ".gitignore"
-    old_ignore = ignore.read_text() if ignore.exists() else None
+    old_ignore = read_text_exact(ignore) if ignore.exists() else None
     if old_ignore is None:
         atomic_write_text(ignore, ".ai-local/\n")
         created.append(".gitignore")
@@ -895,12 +901,14 @@ def init_project(
     if _create(dev, DEV_STUB):
         os.chmod(dev, 0o755)
         created.append("dev")
+        if _create(root / "dev.cmd", DEV_CMD):
+            created.append("dev.cmd")
     for relative, content in sorted(rendered.items()):
         atomic_write_text(_managed_path(root, relative), content)
         created.append(relative)
     lock_text = _lock_text(
-        sha256_file(profile_path),
-        {relative: sha256_text(content) for relative, content in rendered.items()},
+        sha256_managed_text(read_text_exact(profile_path)),
+        {relative: sha256_managed_text(content) for relative, content in rendered.items()},
     )
     atomic_write_text(root / "ai-kit.lock", lock_text)
     created.append("ai-kit.lock")
@@ -942,7 +950,7 @@ def doctor_project(root: Path) -> tuple[DoctorCheck, ...]:
         checks.append(DoctorCheck("lock", False, str(exc)))
     for relative in (".ai/current/STATUS.md", ".ai/current/FINDINGS.md"):
         path = root / relative
-        exists = path.is_file() and not path.is_symlink()
+        exists = path.is_file() and not is_link(path)
         if relative.endswith("STATUS.md") and exists:
             content = path.read_text()
             exists = all(
@@ -950,7 +958,7 @@ def doctor_project(root: Path) -> tuple[DoctorCheck, ...]:
                 for field in ("Goal", "State", "Completed", "Remaining", "Blocked")
             )
         checks.append(DoctorCheck(relative, exists, "valid" if exists else "missing or invalid"))
-    dev = root / "dev"
+    dev = root / ("dev.cmd" if os.name == "nt" and (root / "dev.cmd").exists() else "dev")
     checks.append(
         DoctorCheck(
             "dev",
