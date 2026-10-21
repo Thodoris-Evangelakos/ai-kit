@@ -84,6 +84,7 @@ def test_setup_rejects_unknown_harness_and_conflicting_modes_before_writes(tmp_p
 
 
 @pytest.mark.parametrize("command", ["setup", "adopt"])
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_completed_setup_does_not_launch_again(tmp_path: Path, command: str) -> None:
     from ai_kit.setup import finalize_setup, prepare_setup
     from test_setup import write_dev, write_report
@@ -104,6 +105,7 @@ def test_completed_setup_does_not_launch_again(tmp_path: Path, command: str) -> 
 
 @pytest.mark.parametrize("name", ["codex", "codex_ds", "opencode", "claude"])
 @pytest.mark.parametrize("command", ["setup", "adopt"])
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_interactive_setup_runs_harness_and_independent_finalization(
     tmp_path: Path, name: str, command: str
 ) -> None:

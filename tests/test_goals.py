@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_kit.adoption import BaselineComparison
@@ -48,7 +50,7 @@ class GoalTests(unittest.TestCase):
         self.git("add", ".ai/profile.toml")
         self.git("commit", "-qm", "profile")
 
-    def goal(self, command: str = "true", checks: dict[str, str] | None = None) -> None:
+    def goal(self, command: str = "exit 0", checks: dict[str, str] | None = None) -> None:
         create_goal(
             self.root,
             "feature",
@@ -118,7 +120,11 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(complete_goal(self.root, "feature").state, "DONE")
 
     def test_failed_and_unknown_checks_block_completion(self) -> None:
-        self.goal("test ! -e .git/force-fail || exit 7")
+        self.goal(
+            "if exist .git/force-fail (exit /b 7) else (exit /b 0)"
+            if sys.platform == "win32"
+            else "test ! -e .git/force-fail || exit 7"
+        )
         self.assertEqual(verify_goal(self.root, "feature").state, "VERIFYING")
         flag = self.root / ".git/force-fail"
         flag.touch()
@@ -151,7 +157,11 @@ class GoalTests(unittest.TestCase):
             complete_goal(self.root, "feature")
 
     def test_completion_rechecks_mutable_runtime_evidence(self) -> None:
-        self.goal("test -e .git/ready")
+        self.goal(
+            "if exist .git/ready (exit /b 0) else (exit /b 1)"
+            if sys.platform == "win32"
+            else "test -e .git/ready"
+        )
         ready = self.root / ".git/ready"
         ready.touch()
         self.assertEqual(verify_goal(self.root, "feature").evidence.result, "pass")
@@ -161,7 +171,7 @@ class GoalTests(unittest.TestCase):
         self.assertEqual(load_goal(self.root, "feature").state, "ACTIVE")
 
     def test_check_that_writes_uncommitted_code_cannot_produce_pass_evidence(self) -> None:
-        self.goal("printf 'new code' > generated.py")
+        self.goal("echo new_code > generated.py")
         with self.assertRaisesRegex(GoalError, "uncommitted product"):
             verify_goal(self.root, "feature")
         current = load_goal(self.root, "feature")
@@ -191,23 +201,23 @@ class GoalTests(unittest.TestCase):
 
     def test_strict_profile_requires_verify_check(self) -> None:
         self.profile("strict-verification")
-        self.goal(checks={"acceptance": "true"})
+        self.goal(checks={"acceptance": "exit 0"})
         with self.assertRaisesRegex(GoalError, "verify"):
             verify_goal(self.root, "feature")
         contract = self.root / ".ai/goals/active/feature.toml"
-        contract.write_text(contract.read_text() + '"verify" = "true"\n')
+        contract.write_text(contract.read_text() + '"verify" = "exit 0"\n')
         self.git("add", ".ai/goals/active/feature.toml")
         self.git("commit", "-qm", "require project verification")
         self.assertEqual(verify_goal(self.root, "feature").evidence.result, "pass")
 
     def test_webapp_profile_requires_acceptance_and_runtime_error_checks(self) -> None:
         self.profile("webapp")
-        self.goal(checks={"verify": "true"})
+        self.goal(checks={"verify": "exit 0"})
         with self.assertRaisesRegex(GoalError, "acceptance, runtime_errors"):
             verify_goal(self.root, "feature")
         contract = self.root / ".ai/goals/active/feature.toml"
         contract.write_text(
-            contract.read_text() + '"acceptance" = "true"\n"runtime_errors" = "true"\n'
+            contract.read_text() + '"acceptance" = "exit 0"\n"runtime_errors" = "exit 0"\n'
         )
         self.git("add", ".ai/goals/active/feature.toml")
         self.git("commit", "-qm", "require web acceptance and runtime checks")
@@ -288,7 +298,7 @@ class GoalTests(unittest.TestCase):
             self.assertEqual(complete_goal(self.root, "feature").state, "DONE")
 
     def test_verifying_and_done_require_complete_passing_evidence(self) -> None:
-        self.goal(checks={"one": "true", "two": "true"})
+        self.goal(checks={"one": "exit 0", "two": "exit 0"})
         goal = self.root / ".ai/goals/active/feature.toml"
         goal.write_text(goal.read_text().replace('state = "IMPLEMENTED"', 'state = "VERIFYING"'))
         with self.assertRaisesRegex(GoalError, "requires passing evidence"):
@@ -302,7 +312,7 @@ class GoalTests(unittest.TestCase):
             load_goal(self.root, "feature")
 
     def test_only_legal_state_transitions_are_available(self) -> None:
-        create_goal(self.root, "feature", "Feature", "Intent", ["Criterion"], {"check": "true"})
+        create_goal(self.root, "feature", "Feature", "Intent", ["Criterion"], {"check": "exit 0"})
         with self.assertRaisesRegex(GoalError, "must be IMPLEMENTED"):
             verify_goal(self.root, "feature")
         with self.assertRaisesRegex(GoalError, "illegal goal transition"):
@@ -316,20 +326,21 @@ class GoalTests(unittest.TestCase):
         with self.assertRaisesRegex(GoalError, "illegal goal transition"):
             set_goal_state(self.root, "feature", "DONE")
 
+    @pytest.mark.usefixtures("symlinks")
     def test_missing_acceptance_or_checks_is_invalid(self) -> None:
         with self.assertRaisesRegex(GoalError, "acceptance"):
-            create_goal(self.root, "feature", "Feature", "Intent", [], {"check": "true"})
+            create_goal(self.root, "feature", "Feature", "Intent", [], {"check": "exit 0"})
         with self.assertRaisesRegex(GoalError, "required check"):
             create_goal(self.root, "feature", "Feature", "Intent", ["Criterion"], {})
         with self.assertRaisesRegex(GoalError, "id must"):
             create_goal(
-                self.root, "../escape", "Feature", "Intent", ["Criterion"], {"check": "true"}
+                self.root, "../escape", "Feature", "Intent", ["Criterion"], {"check": "exit 0"}
             )
         with tempfile.TemporaryDirectory() as outside:
             (self.root / ".ai").symlink_to(outside, target_is_directory=True)
             with self.assertRaisesRegex(GoalError, "symlink"):
                 create_goal(
-                    self.root, "feature", "Feature", "Intent", ["Criterion"], {"check": "true"}
+                    self.root, "feature", "Feature", "Intent", ["Criterion"], {"check": "exit 0"}
                 )
             self.assertEqual(list(Path(outside).iterdir()), [])
 

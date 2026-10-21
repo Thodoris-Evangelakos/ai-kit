@@ -22,6 +22,7 @@ def test_unknown_discovered_baseline_cannot_finalize(tmp_path: Path) -> None:
     assert setup_status(root) == "pending"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX file modes or special files")
 def test_converted_legacy_router_mode_remains_protected(tmp_path: Path) -> None:
     from ai_kit.project import init_project
 
@@ -97,6 +98,7 @@ def test_snapshot_git_head_is_validated_before_finalization(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize("committed", [False, True])
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_snapshot_preserves_staged_and_dirty_work(tmp_path: Path, committed: bool) -> None:
     root = repo(tmp_path)
     write_dev(root)
@@ -121,6 +123,7 @@ def test_snapshot_preserves_staged_and_dirty_work(tmp_path: Path, committed: boo
 
 
 @pytest.mark.parametrize("mode", [0o700, 0o755])
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX file modes or special files")
 def test_existing_executable_dev_permissions_are_preserved(tmp_path: Path, mode: int) -> None:
     root = repo(tmp_path)
     write_dev(root, mode=mode)
@@ -134,6 +137,7 @@ def test_existing_executable_dev_permissions_are_preserved(tmp_path: Path, mode:
     assert setup_status(root) == "pending"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_nonexecutable_dev_may_gain_execute_permission(tmp_path: Path) -> None:
     root = repo(tmp_path)
     write_dev(root, mode=0o640)
@@ -146,6 +150,7 @@ def test_nonexecutable_dev_may_gain_execute_permission(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.usefixtures("symlinks")
 def test_integration_rejects_symlinked_directory_targets(tmp_path: Path, resume: bool) -> None:
     root = repo(tmp_path)
     outside = tmp_path / "outside"
@@ -164,6 +169,7 @@ def test_integration_rejects_symlinked_directory_targets(tmp_path: Path, resume:
     assert list(outside.iterdir()) == []
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_split_index_snapshot_is_self_contained(tmp_path: Path) -> None:
     root = repo(tmp_path)
     write_dev(root)

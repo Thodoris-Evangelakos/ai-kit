@@ -1,5 +1,8 @@
 # Current findings
 
+- Windows support keeps the existing XDG paths. New starters use Python plus dev.cmd; the menu prefers a native dev.cmd and can run inherited shell dev scripts through Git for Windows. Goal command strings use cmd.exe on Windows. Batch harness arguments pass through environment variables to preserve percent signs and other valid path characters.
+- Managed text/profile hashes normalize CRLF to LF, while snapshot digests and guarded writes retain raw byte checks. Managed block rewrites preserve their existing newline style and surrounding human bytes. Windows junctions are refused at the same boundaries as symlinks. Confined checks remain Linux-only; Windows adoption records UNKNOWN and setup cannot finalize.
+
 - The shipped model still owns a seven-state goal lifecycle; required checks and completion evidence live in goal contracts, not a standalone `.ai/verification.toml`. [Architecture direction](../../docs/architecture-direction.md) selects native harness tasks and project-owned verification for a future model; it does not supersede accepted ADRs or implement that transition.
 - Historical DONE evidence also drives `doctor`: product changes require reopening and reverifying accepted goals. Git ancestry is required as well; squash/rebase can invalidate identical verified content. Optmem, harness-setup, terminal-menu, and post-mvp-hardening passed at da7bb3f; current adoption changes make that completion evidence stale.
 - The optional `optmem` module renders instructions only, using a separately installed tool and shared memory store. Project separation relies on consistent tags in notes; regex recall searches original records even when summaries omit tags. Recalled memories do not replace repository authority.

@@ -10,6 +10,21 @@ uv tool install /path/to/ai-kit
 ai-kit --version
 ```
 
+Windows requires Python 3.11+, Git, and uv. From a checkout in PowerShell,
+use `uv tool install --editable .`, `.\dev.cmd setup`, then `.\dev.cmd check`.
+The Windows menu dependency is installed automatically; `TERM` may be unset.
+New project starters include `dev.cmd`; use `.\dev.cmd verify` there. Existing
+project scripts are preserved. The menu runs Python starters directly, uses
+an existing `dev.cmd`, or finds Git for Windows to run an inherited shell script.
+Goal check strings run under `cmd.exe` on Windows, so quote and write those
+commands for that shell (for example, `dev.cmd verify`). XDG configuration
+overrides and the `~/.config/ai-kit/config.toml` fallback work on both platforms.
+
+Adoption baseline checks and setup finalization require Linux Landlock.
+On Windows those checks remain UNKNOWN without running unconfined code;
+setup can be prepared and handed to a harness, but stays pending. Use a Linux
+environment for workflows requiring confined adoption or finalized setup.
+
 Initialize from inside the target repository:
 
 ```sh
@@ -136,7 +151,7 @@ and `ai-kit sync --check` before retrying.
 Every action restores the terminal first, runs the real command, prints its
 output and true exit status, and waits for Enter before returning to the menu;
 nonzero results are reported as failures. The menu needs a real TTY and a
-capable `TERM`; otherwise it fails with a clear message and never hangs, and a
+capable terminal (`TERM` is required on Unix); otherwise it fails with a clear message, and a
 window that is too small shows a resize prompt instead of a broken screen.
 
 ## Setup with your preferred harness

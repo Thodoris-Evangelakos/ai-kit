@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pytest
@@ -64,7 +65,7 @@ def test_adopt_without_available_harness_requires_safe_fallback_consent(
     monkeypatch.setattr("ai_kit.harness.harness_available", lambda name: False)
     result = CliRunner().invoke(app, ["adopt"], input=answer)
     assert "adopt --safe" in result.output
-    assert result.exit_code == (0 if accepted else 1), result.output
+    assert result.exit_code == (0 if accepted and sys.platform == "linux" else 1), result.output
     assert (adoption_repo / "ai-kit.lock").exists() == accepted
     assert (adoption_repo / "source.txt").read_text() == "user work\n"
     assert not (adoption_repo / ".ai/setup").exists()
@@ -76,7 +77,7 @@ def test_adopt_without_available_harness_requires_safe_fallback_consent(
 def test_adopt_can_decline_harness_selection_then_confirm_safe_fallback(adoption_repo, monkeypatch):
     monkeypatch.setattr("ai_kit.harness.harness_available", lambda name: name == "codex")
     result = CliRunner().invoke(app, ["adopt"], input="none\ny\n")
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == (0 if sys.platform == "linux" else 1), result.output
     assert "adopt --safe" in result.output
     assert (adoption_repo / "ai-kit.lock").exists()
     assert not (adoption_repo / ".ai/setup").exists()
@@ -127,7 +128,7 @@ def test_adopt_finishes_safe_fallback_when_harness_becomes_available(adoption_re
 
     monkeypatch.setattr("ai_kit.harness.harness_available", lambda name: False)
     fallback = CliRunner().invoke(app, ["adopt"], input="y\n")
-    assert fallback.exit_code == 0, fallback.output
+    assert fallback.exit_code == (0 if sys.platform == "linux" else 1), fallback.output
     baseline = (adoption_repo / ".ai/baseline.json").read_bytes()
     monkeypatch.setattr("ai_kit.harness.harness_available", lambda name: name == "codex")
     monkeypatch.setattr("ai_kit.harness.launch_setup_harness", lambda *args: 9)

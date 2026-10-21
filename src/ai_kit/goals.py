@@ -7,11 +7,12 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .system import UnsafeWriteError, atomic_write_text
+from .system import UnsafeWriteError, atomic_write_text, is_link
 
 SCHEMA = 1
 STATES = {"DRAFT", "READY", "ACTIVE", "IMPLEMENTED", "VERIFYING", "BLOCKED", "DONE"}
@@ -151,7 +152,7 @@ def _path(root: Path, goal_id: str, directory: str) -> Path:
     base = Path(root)
     for part in (".ai", "goals", directory):
         base = base / part
-        if base.is_symlink():
+        if is_link(base):
             raise GoalError(f"goal directory is a symlink: {base}")
     return base / f"{goal_id}.toml"
 
@@ -302,7 +303,7 @@ def _render(goal: Goal) -> bytes:
 
 
 def _read(path: Path) -> Goal:
-    if path.is_symlink() or not path.is_file():
+    if is_link(path) or not path.is_file():
         raise GoalError(f"goal file is missing or is a symlink: {path}")
     goal = _parse(path.read_bytes())
     if path.stem != goal.id:
@@ -336,7 +337,7 @@ def create_goal(
     goal = _validate(Goal(goal_id, title, "READY", intent, tuple(acceptance), dict(checks)))
     active = _path(root, goal_id, "active")
     accepted = _path(root, goal_id, "accepted")
-    if accepted.exists() or accepted.is_symlink():
+    if accepted.exists() or is_link(accepted):
         raise GoalError(f"goal already accepted: {goal_id}")
     _write(active, goal)
     return goal
@@ -345,8 +346,8 @@ def create_goal(
 def load_goal(root: Path, goal_id: str) -> Goal:
     active = _path(root, goal_id, "active")
     accepted = _path(root, goal_id, "accepted")
-    active_present = active.exists() or active.is_symlink()
-    accepted_present = accepted.exists() or accepted.is_symlink()
+    active_present = active.exists() or is_link(active)
+    accepted_present = accepted.exists() or is_link(accepted)
     if active_present and accepted_present:
         raise GoalError(f"goal exists in both active and accepted: {goal_id}")
     return _read(active if active_present else accepted)
@@ -426,7 +427,7 @@ def _require_committed_contract(root: Path, goal: Goal) -> None:
 
 def _require_profile_checks(root: Path, goal: Goal) -> None:
     profile_path = root / ".ai/profile.toml"
-    if not (profile_path.exists() or profile_path.is_symlink()):
+    if not (profile_path.exists() or is_link(profile_path)):
         return
     from .project import ProjectError, load_profile
 
@@ -571,7 +572,7 @@ def verify_goal(root: Path, goal_id: str) -> Goal:
             process = subprocess.run(
                 command,
                 shell=True,
-                executable="/bin/sh",
+                executable=None if sys.platform == "win32" else "/bin/sh",
                 cwd=root,
                 capture_output=True,
                 check=False,
@@ -629,7 +630,7 @@ def complete_goal(root: Path, goal_id: str) -> Goal:
         raise GoalError("completion recheck failed; inspect the new verification result")
     original = path.read_bytes()
     baseline = root / ".ai/baseline.json"
-    if baseline.is_symlink():
+    if is_link(baseline):
         raise GoalError(f"baseline is a symlink: {baseline}")
     if baseline.exists():
         from .adoption import recheck_baseline

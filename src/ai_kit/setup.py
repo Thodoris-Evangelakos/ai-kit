@@ -28,6 +28,8 @@ from .adoption import (
     compare_baseline,
 )
 from .project import (
+    DEV_CMD,
+    DEV_STUB,
     LOCK_SCHEMA_SETUP,
     PROFILE_SCHEMA,
     Profile,
@@ -50,9 +52,11 @@ from .system import (
     GitStatus,
     UnsafeWriteError,
     atomic_write_text,
+    is_link,
     read_text_exact,
     run_git,
     sha256_file,
+    sha256_managed_text,
     sha256_text,
 )
 
@@ -76,6 +80,7 @@ _NEW_ALLOWED_EXACT = frozenset(
     {
         ".gitignore",
         "dev",
+        "dev.cmd",
         "ai-kit.lock",
         "AGENTS.md",
         "AGENTS.override.md",
@@ -150,7 +155,7 @@ def _assert_no_symlink_prefix(root: Path, relative: str) -> Path:
     current = root
     for part in path.parts:
         current = current / part
-        if current.is_symlink():
+        if is_link(current):
             raise SetupError(f"refusing to write through symlink: {relative}")
     return root / path
 
@@ -201,7 +206,7 @@ def _current_entries(root: Path, tracked: set[str] | None = None) -> list[dict[s
         for name in list(dirnames):
             child = current / name
             child_rel = (relative_dir / name).as_posix()
-            if child.is_symlink():
+            if is_link(child):
                 entries.append(_entry(root, child_rel, tracked))
                 dirnames.remove(name)
             elif name in _CACHE_DIRS and not _has_tracked(tracked, child_rel):
@@ -209,7 +214,7 @@ def _current_entries(root: Path, tracked: set[str] | None = None) -> list[dict[s
         for name in filenames:
             child_rel = (relative_dir / name).as_posix()
             child = current / name
-            if child.is_symlink():
+            if is_link(child):
                 entries.append(_entry(root, child_rel, tracked))
                 continue
             first = Path(child_rel).parts[0]
@@ -301,7 +306,7 @@ def _install_snapshot_git_metadata(root: Path, snapshot: Path) -> None:
     names += tuple(path.name for path in repository.git_dir.glob("sharedindex.*"))
     for name in names:
         source = repository.git_dir / name
-        if source.is_file() and not source.is_symlink():
+        if source.is_file() and not is_link(source):
             shutil.copy2(source, destination / name)
 
 
@@ -330,7 +335,7 @@ def _write_manifest(root: Path, entries: list[dict[str, object]], head: str = ""
 
 def _load_manifest(root: Path) -> tuple[str, list[dict[str, object]]]:
     path = root / MANIFEST_REL
-    if path.is_symlink() or not path.is_file():
+    if is_link(path) or not path.is_file():
         raise SetupError(f"original preservation manifest is missing: {path}")
     try:
         data = json.loads(path.read_text())
@@ -369,7 +374,7 @@ def _validate_snapshot(
         raise SetupError(f"the private original snapshot is missing: {snapshot}")
     repository = GitRepository.discover(snapshot)
     if (
-        (snapshot / ".git").is_symlink()
+        is_link(snapshot / ".git")
         or repository is None
         or repository.root != snapshot
         or repository.head() != (head or None)
@@ -378,10 +383,10 @@ def _validate_snapshot(
     for entry in entries:
         captured = snapshot / str(entry["path"])
         if entry["type"] == "symlink":
-            if not captured.is_symlink() or os.readlink(captured) != str(entry["target"]):
+            if not is_link(captured) or os.readlink(captured) != str(entry["target"]):
                 raise SetupError(f"captured symlink changed: {entry['path']}")
             continue
-        if not captured.is_file() or captured.is_symlink():
+        if not captured.is_file() or is_link(captured):
             raise SetupError(f"captured file missing: {entry['path']}")
         captured_mode = f"{stat.S_IMODE(os.stat(captured).st_mode):04o}"
         if captured_mode != entry.get("mode"):
@@ -397,7 +402,7 @@ def _validate_snapshot(
 
 
 def _load_lock_or_none(root: Path):
-    if (root / "ai-kit.lock").is_symlink():
+    if is_link(root / "ai-kit.lock"):
         raise SetupError("refusing symlinked ai-kit.lock")
     if not (root / "ai-kit.lock").is_file():
         return None
@@ -462,6 +467,7 @@ def _integration_write_paths(root: Path, lock) -> list[str]:
             ".ai/decisions/README.md",
             ".gitignore",
             "dev",
+            "dev.cmd",
             "AGENTS.md",
             "CLAUDE.md",
             "AGENTS.override.md",
@@ -477,7 +483,7 @@ def _preflight(root: Path, lock) -> None:
     for relative in _integration_write_paths(root, lock):
         _assert_no_symlink_prefix(root, relative)
     profile = root / ".ai/profile.toml"
-    if lock is None and (profile.exists() or profile.is_symlink()):
+    if lock is None and (profile.exists() or is_link(profile)):
         raise SetupError(
             ".ai/profile.toml exists without a compatible ai-kit.lock; "
             "keep the custom profile and adopt manually, or move it aside and re-run setup"
@@ -487,7 +493,7 @@ def _preflight(root: Path, lock) -> None:
         for relative, _content in rendered.items():
             if relative == "AGENTS.md":
                 continue
-            if (root / relative).exists() and not (root / relative).is_symlink():
+            if (root / relative).exists() and not is_link(root / relative):
                 raise SetupError(
                     f"{relative} already exists as a human-owned file; "
                     "move it aside or choose a different profile before setup"
@@ -495,7 +501,7 @@ def _preflight(root: Path, lock) -> None:
     # Marker collisions in pre-existing instruction files are never resolved silently.
     for relative in ("AGENTS.md", "AGENTS.override.md", "CLAUDE.md"):
         path = root / relative
-        if path.is_file() and not path.is_symlink():
+        if path.is_file() and not is_link(path):
             try:
                 read_managed_block(read_text_exact(path), relative)
             except ProjectError as exc:
@@ -504,14 +510,14 @@ def _preflight(root: Path, lock) -> None:
 
 def _write_if_absent(root: Path, relative: str, content: str) -> None:
     path = root / relative
-    if path.exists() or path.is_symlink():
+    if path.exists() or is_link(path):
         return
     atomic_write_text(path, content)
 
 
 def _ensure_gitignore(root: Path) -> None:
     path = root / ".gitignore"
-    if path.is_symlink():
+    if is_link(path):
         raise SetupError("refusing symlinked .gitignore")
     if not path.exists():
         atomic_write_text(path, ".ai-local/\n")
@@ -525,25 +531,13 @@ def _ensure_gitignore(root: Path) -> None:
 
 def _ensure_dev(root: Path) -> None:
     path = root / "dev"
-    if path.exists() or path.is_symlink():
+    if path.exists() or is_link(path):
         return
-    atomic_write_text(path, _dev_stub())
+    atomic_write_text(path, DEV_STUB)
     os.chmod(path, 0o755)
-
-
-def _dev_stub() -> str:
-    return (
-        "#!/bin/sh\n"
-        "set -eu\n"
-        'case "${1:-}" in\n'
-        "  setup|check|verify)\n"
-        '    echo "./dev $1 is unconfigured; add this project\'s real checks" >&2\n'
-        "    exit 2 ;;\n"
-        "  *)\n"
-        '    echo "usage: ./dev {setup|check|verify}" >&2\n'
-        "    exit 2 ;;\n"
-        "esac\n"
-    )
+    launcher = root / "dev.cmd"
+    if not launcher.exists() and not is_link(launcher):
+        atomic_write_text(launcher, DEV_CMD)
 
 
 def _configure_blocks(root: Path, lock, modules: tuple[str, ...]) -> tuple[dict[str, str], bool]:
@@ -556,7 +550,7 @@ def _configure_blocks(root: Path, lock, modules: tuple[str, ...]) -> tuple[dict[
     for relative in targets:
         path = root / relative
         content = block_content(relative, profile, setup=True)
-        if path.is_symlink():
+        if is_link(path):
             raise SetupError(f"refusing symlinked instruction file: {relative}")
         if not path.exists():
             atomic_write_text(path, managed_block(content))
@@ -576,7 +570,7 @@ def _configure_blocks(root: Path, lock, modules: tuple[str, ...]) -> tuple[dict[
             elif (
                 lock is not None
                 and relative in lock.generated
-                and sha256_text(text) == lock.generated[relative]
+                and sha256_managed_text(text) == lock.generated[relative]
             ):
                 # An explicit, reviewed conversion of a clean whole-file router.
                 atomic_write_text(path, managed_block(content), expected_digest=digest_before)
@@ -591,7 +585,7 @@ def _configure_blocks(root: Path, lock, modules: tuple[str, ...]) -> tuple[dict[
                     apply_managed_block(text, relative, content),
                     expected_digest=digest_before,
                 )
-        blocks[relative] = sha256_text(managed_block(content))
+        blocks[relative] = sha256_managed_text(managed_block(content))
     return blocks, converted
 
 
@@ -639,10 +633,10 @@ def _integrate(root: Path, lock, modules: tuple[str, ...]) -> tuple[dict[str, st
     rendered.pop("AGENTS.md", None)
     for relative, content in sorted(rendered.items()):
         path = _managed_path(root, relative)
-        if path.exists() or path.is_symlink():
-            if not path.is_file() or path.is_symlink():
+        if path.exists() or is_link(path):
+            if not path.is_file() or is_link(path):
                 raise SetupError(f"cannot install generated file over {relative}")
-            if sha256_text(read_text_exact(path)) != sha256_text(content):
+            if sha256_managed_text(read_text_exact(path)) != sha256_managed_text(content):
                 raise SetupError(
                     f"{relative} already exists and differs from the generated file; "
                     "move the human file aside before setup"
@@ -665,17 +659,17 @@ def _determine_modules(root: Path, lock) -> tuple[str, ...]:
 
 
 def _write_lock(root: Path, lock, blocks: dict[str, str], setup: dict[str, object]) -> None:
-    profile_digest = sha256_file(root / ".ai/profile.toml")
+    profile_digest = sha256_managed_text(read_text_exact(root / ".ai/profile.toml"))
     modules = load_profile(root).modules
     rendered = render_codex(Profile(PROFILE_SCHEMA, "software", modules))
     rendered.pop("AGENTS.md", None)
-    generated = {path: sha256_text(content) for path, content in rendered.items()}
+    generated = {path: sha256_managed_text(content) for path, content in rendered.items()}
     text = _lock_text(
         profile_digest, generated, blocks=blocks, setup=setup, schema=LOCK_SCHEMA_SETUP
     )
     path = root / "ai-kit.lock"
     if path.exists():
-        atomic_write_text(path, text, expected_content=path.read_text())
+        atomic_write_text(path, text, expected_content=read_text_exact(path))
     else:
         atomic_write_text(path, text)
 
@@ -691,7 +685,7 @@ def _locked_state_failures(root: Path, lock) -> list[str]:
     failures: list[str] = []
     for relative, digest in sorted(lock.blocks.items()):
         path = root / relative
-        if not path.is_file() or path.is_symlink():
+        if not path.is_file() or is_link(path):
             failures.append(f"managed instruction file missing: {relative}")
             continue
         try:
@@ -701,14 +695,14 @@ def _locked_state_failures(root: Path, lock) -> list[str]:
             continue
         if block is None:
             failures.append(f"managed block missing: {relative}")
-        elif sha256_text(block) != digest:
+        elif sha256_managed_text(block) != digest:
             failures.append(f"managed block drift: {relative}")
     for relative, digest in sorted(lock.generated.items()):
         path = root / relative
-        if not path.is_file() or path.is_symlink():
+        if not path.is_file() or is_link(path):
             failures.append(f"generated file missing: {relative}")
             continue
-        if sha256_file(path) != digest:
+        if sha256_managed_text(read_text_exact(path)) != digest:
             failures.append(f"generated file drift: {relative}")
     return failures
 
@@ -725,7 +719,7 @@ def _write_pending_marker(root: Path, record: dict[str, object]) -> None:
 
 def _load_pending_marker(root: Path) -> dict[str, object]:
     path = root / PENDING_REL
-    if path.is_symlink() or not path.is_file():
+    if is_link(path) or not path.is_file():
         raise SetupError(f"pending setup marker is missing: {path}")
     try:
         data = json.loads(read_text_exact(path))
@@ -747,9 +741,9 @@ def _router_converted(root: Path, lock) -> bool:
     if lock is None or "AGENTS.md" not in lock.generated:
         return False
     captured = _snapshot_dir(root) / "AGENTS.md"
-    if not captured.is_file() or captured.is_symlink():
+    if not captured.is_file() or is_link(captured):
         return False
-    return sha256_file(captured) == lock.generated["AGENTS.md"]
+    return sha256_managed_text(read_text_exact(captured)) == lock.generated["AGENTS.md"]
 
 
 def _adopt_initial_baseline(root: Path, timeout: float, source: GitStatus) -> None:
@@ -782,7 +776,7 @@ def _baseline_core_digest(root: Path) -> str | None:
     """
 
     path = root / BASELINE_REL
-    if path.is_symlink() or not path.is_file():
+    if is_link(path) or not path.is_file():
         return None
     try:
         data = json.loads(read_text_exact(path))
@@ -928,7 +922,7 @@ def setup_status(root: Path) -> str:
     """Return ``pending``, ``completed``, or ``absent`` for the setup operation."""
 
     candidate = Path(root)
-    if (candidate / "ai-kit.lock").is_symlink():
+    if is_link(candidate / "ai-kit.lock"):
         return "absent"
     if not (candidate / "ai-kit.lock").is_file():
         return "absent"
@@ -940,7 +934,7 @@ def setup_status(root: Path) -> str:
         # A completed lock is only honest when its independently written
         # evidence exists; otherwise the setup is still pending.
         evidence = candidate / EVIDENCE_REL
-        return "completed" if evidence.is_file() and not evidence.is_symlink() else "pending"
+        return "completed" if evidence.is_file() and not is_link(evidence) else "pending"
     if lock.setup and lock.setup.get("state") == "pending":
         return "pending"
     return "absent"
@@ -974,7 +968,7 @@ def _as_argv(value: object, label: str) -> tuple[str, ...]:
 
 def _load_report(root: Path) -> _Report:
     path = root / REPORT_REL
-    if path.is_symlink() or not path.is_file():
+    if is_link(path) or not path.is_file():
         raise SetupError(f"setup report is missing: {path}")
     try:
         data = json.loads(path.read_text())
@@ -1012,7 +1006,7 @@ def _validate_context(root: Path, report: _Report) -> list[str]:
             failures.append(f"context reference escapes the repository: {reference}")
             continue
         path = root / candidate
-        if not path.exists() or path.is_symlink() or not path.resolve().is_relative_to(root):
+        if not path.exists() or is_link(path) or not path.resolve().is_relative_to(root):
             failures.append(f"context reference does not exist: {reference}")
     return failures
 
@@ -1038,7 +1032,7 @@ def _is_integration_path(relative: str) -> bool:
 
 def _gitignore_failures(root: Path, entries: list[dict[str, object]]) -> list[str]:
     path = root / ".gitignore"
-    if path.is_symlink():
+    if is_link(path):
         return ["gitignore became a symlink"]
     original = next((entry for entry in entries if entry["path"] == ".gitignore"), None)
     if original is None or original["type"] != "file":
@@ -1074,10 +1068,10 @@ def _dev_failures(root: Path, entries: list[dict[str, object]]) -> list[str]:
         return []
     path = root / "dev"
     if original["type"] == "symlink":
-        if not path.is_symlink() or os.readlink(path) != str(original["target"]):
+        if not is_link(path) or os.readlink(path) != str(original["target"]):
             return ["inherited dev symlink changed"]
         return []
-    if path.is_symlink() or not path.is_file():
+    if is_link(path) or not path.is_file():
         return ["inherited dev was removed or replaced by a non-file"]
     original_mode = int(str(original.get("mode", "0")), 8)
     current_mode = stat.S_IMODE(path.stat().st_mode)
@@ -1134,7 +1128,7 @@ def _block_failures(root: Path, lock) -> list[str]:
     failures: list[str] = []
     for relative, digest in sorted(lock.blocks.items()):
         path = root / relative
-        if not path.is_file() or path.is_symlink():
+        if not path.is_file() or is_link(path):
             failures.append(f"managed instruction file missing: {relative}")
             continue
         try:
@@ -1144,7 +1138,7 @@ def _block_failures(root: Path, lock) -> list[str]:
             continue
         if block is None:
             failures.append(f"managed block missing: {relative}")
-        elif sha256_text(block) != digest:
+        elif sha256_managed_text(block) != digest:
             failures.append(f"managed block drift: {relative}")
     return failures
 
@@ -1206,7 +1200,7 @@ def _record_baseline(
     root: Path, records: dict[str, CheckResult], resolved: set[str] | None = None
 ) -> None:
     path = root / BASELINE_REL
-    if path.is_symlink():
+    if is_link(path):
         raise SetupError(f"refusing symlinked baseline: {path}")
     if path.is_file():
         original_text = read_text_exact(path)
@@ -1313,7 +1307,7 @@ def _content_digest(root: Path) -> str:
 
 def _protocol_failures(root: Path, setup: dict[str, object]) -> list[str]:
     path = root / PROTOCOL_REL
-    if path.is_symlink() or not path.is_file():
+    if is_link(path) or not path.is_file():
         return [f"the setup protocol is missing: {PROTOCOL_REL}"]
     expected = setup.get("protocol_digest")
     if isinstance(expected, str) and sha256_file(path) != expected:
@@ -1346,7 +1340,7 @@ def _dev_required_failures(root: Path, timeout: float) -> list[str]:
     """Independently run the project's own ``./dev check`` and ``./dev verify``."""
 
     dev = root / "dev"
-    if dev.is_symlink() or not dev.is_file() or not os.access(dev, os.X_OK):
+    if is_link(dev) or not dev.is_file() or not os.access(dev, os.X_OK):
         return ["required ./dev check and ./dev verify are missing or not executable"]
     failures: list[str] = []
     for argv in (("./dev", "check"), ("./dev", "verify")):
@@ -1364,7 +1358,7 @@ def _dev_required_failures(root: Path, timeout: float) -> list[str]:
 
 def _load_recorded_checks(root: Path) -> dict[str, object]:
     path = root / BASELINE_REL
-    if path.is_symlink():
+    if is_link(path):
         raise SetupError(f"refusing symlinked baseline: {path}")
     if not path.is_file():
         return {}
@@ -1446,7 +1440,7 @@ def _mark_custody_managed(root: Path) -> None:
     """Mark safe custody managed only after every gate has passed."""
 
     path = root / CUSTODY_REL
-    if path.is_symlink() or not path.is_file():
+    if is_link(path) or not path.is_file():
         return
     content = read_text_exact(path)
     header = "schema = 1\nmanaged = false\n\n[custody]\n"
@@ -1462,7 +1456,7 @@ def _evidence_failures(root: Path, setup: dict[str, object]) -> list[str]:
     """Validate the evidence that a completed lock must be bound to."""
 
     path = root / EVIDENCE_REL
-    if path.is_symlink() or not path.is_file():
+    if is_link(path) or not path.is_file():
         return ["completed setup evidence is missing"]
     try:
         data = json.loads(read_text_exact(path))
@@ -1631,7 +1625,7 @@ def finalize_setup(root: Path, *, timeout: float = 60.0) -> None:
     }
     evidence_path = repository_root / EVIDENCE_REL
     evidence_text = json.dumps(evidence, indent=2, sort_keys=True) + "\n"
-    if evidence_path.is_symlink():
+    if is_link(evidence_path):
         raise SetupError(f"refusing symlinked setup evidence: {evidence_path}")
     if evidence_path.is_file():
         # Guarded against concurrent modification but robust to our own earlier

@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import os
-import pty
 import select
 import shutil
 import signal
 import struct
 import subprocess
 import sys
-import termios
 import time
 from pathlib import Path
 
 import pytest
+
+if sys.platform != "win32":
+    import pty
+    import termios
 
 from ai_kit import menu, project
 from ai_kit.project import (
@@ -153,6 +155,7 @@ def test_set_profile_modules_refuses_manual_drift_without_writing(tmp_path: Path
     assert not (root / ".agents/skills/maintain-learning-journal").exists()
 
 
+@pytest.mark.usefixtures("symlinks")
 def test_set_profile_modules_rejects_symlink_and_unmanaged_collision(tmp_path: Path) -> None:
     root = repo(tmp_path)
     init_project(root)
@@ -195,6 +198,7 @@ def test_set_profile_modules_rejects_unsupported_module(tmp_path: Path) -> None:
         set_profile_modules(root, ("not-a-real-module",))
 
 
+@pytest.mark.usefixtures("symlinks")
 def test_set_profile_modules_refuses_symlinked_ai_local(tmp_path: Path) -> None:
     root = repo(tmp_path)
     init_project(root)
@@ -209,6 +213,7 @@ def test_set_profile_modules_refuses_symlinked_ai_local(tmp_path: Path) -> None:
     assert (root / ".ai/profile.toml").read_bytes() == before
 
 
+@pytest.mark.usefixtures("symlinks")
 def test_set_profile_modules_refuses_symlinked_profile_directory(tmp_path: Path) -> None:
     root = repo(tmp_path / "repo")
     init_project(root)
@@ -372,6 +377,7 @@ class PtySession:
         os.close(self.master)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX pseudo-terminal")
 def test_pty_menu_applies_modules_runs_action_and_restores_terminal(tmp_path: Path) -> None:
     root = repo(tmp_path / "project")
     init_project(root)
@@ -417,6 +423,7 @@ def test_pty_menu_applies_modules_runs_action_and_restores_terminal(tmp_path: Pa
     assert sync_project(root, check=True).clean
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX pseudo-terminal")
 def test_pty_menu_cancel_discards_selection(tmp_path: Path) -> None:
     root = repo(tmp_path / "project")
     init_project(root)
@@ -440,6 +447,7 @@ def test_pty_menu_cancel_discards_selection(tmp_path: Path) -> None:
     assert load_profile(root).modules == ("strict-verification",)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX pseudo-terminal")
 def test_pty_menu_reports_nonzero_command_failure(tmp_path: Path) -> None:
     root = repo(tmp_path / "project")
     init_project(root)  # the starter ./dev exits nonzero, so the action must fail loudly
@@ -530,6 +538,7 @@ def test_harness_save_failure_is_shown_without_exiting_menu(
     assert "not writable" in " ".join(shown[-1][0])
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX pseudo-terminal")
 def test_pty_menu_selects_harness_persists_user_wide_and_never_launches(
     tmp_path: Path,
 ) -> None:
@@ -582,6 +591,7 @@ def test_pty_menu_selects_harness_persists_user_wide_and_never_launches(
 
 
 @pytest.mark.parametrize("cancel", [b"q", b"\x1b", b"\x04"])
+@pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX pseudo-terminal")
 def test_pty_menu_harness_cancel_keeps_config_absent(tmp_path: Path, cancel: bytes) -> None:
     root = repo(tmp_path / "project")
     init_project(root)
@@ -606,6 +616,7 @@ def test_pty_menu_harness_cancel_keeps_config_absent(tmp_path: Path, cancel: byt
     assert not config.exists()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX pseudo-terminal")
 def test_pty_menu_harness_ctrl_c_cancels_without_writing(tmp_path: Path) -> None:
     root = repo(tmp_path / "project")
     init_project(root)
@@ -630,6 +641,7 @@ def test_pty_menu_harness_ctrl_c_cancels_without_writing(tmp_path: Path) -> None
     assert not config.exists()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX pseudo-terminal")
 def test_pty_menu_harness_cancel_keeps_existing_config_unchanged(tmp_path: Path) -> None:
     root = repo(tmp_path / "project")
     init_project(root)
@@ -658,6 +670,7 @@ def test_pty_menu_harness_cancel_keeps_existing_config_unchanged(tmp_path: Path)
     assert config.read_text() == original
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX pseudo-terminal")
 def test_pty_menu_saves_not_installed_harness_with_install_guidance(tmp_path: Path) -> None:
     root = repo(tmp_path / "project")
     init_project(root)
@@ -688,6 +701,7 @@ def test_pty_menu_saves_not_installed_harness_with_install_guidance(tmp_path: Pa
     assert 'setup_harness = "claude"' in config.read_text()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX pseudo-terminal")
 def test_pty_menu_harness_screen_survives_resize(tmp_path: Path) -> None:
     root = repo(tmp_path / "project")
     init_project(root)
@@ -721,6 +735,7 @@ def test_pty_menu_harness_screen_survives_resize(tmp_path: Path) -> None:
     assert session.proc.returncode == 0
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires a POSIX pseudo-terminal")
 def test_pty_menu_setup_action_dispatches_cli_then_returns(tmp_path: Path) -> None:
     root = repo(tmp_path / "project")
     init_project(root)

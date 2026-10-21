@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,7 @@ def test_resume_refuses_to_replace_edited_instruction_block(tmp_path: Path) -> N
     assert path.read_text() == changed
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_setup_preserves_crlf_instruction_bytes(tmp_path: Path) -> None:
     root = repo(tmp_path)
     original = b"# Human instructions\r\n\r\nKeep this text.\r\n"
@@ -76,6 +78,7 @@ def test_setup_preserves_crlf_instruction_bytes(tmp_path: Path) -> None:
     finalize_setup(root)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_adoption_records_original_baseline_before_agent_work(tmp_path: Path) -> None:
     root = repo(tmp_path)
     write_dev(root, "#!/bin/sh\necho inherited\nexit 7\n")

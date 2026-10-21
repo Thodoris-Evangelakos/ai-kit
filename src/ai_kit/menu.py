@@ -23,6 +23,7 @@ from .project import (
     load_profile,
     set_profile_modules,
 )
+from .system import batch_command, dev_command
 
 
 class MenuError(RuntimeError):
@@ -71,7 +72,12 @@ def interactive_ready() -> bool:
     """Whether a keyboard-driven menu can run on this terminal."""
 
     term = os.environ.get("TERM", "").strip()
-    return _isatty(sys.stdin) and _isatty(sys.stdout) and bool(term) and term != "dumb"
+    return (
+        _isatty(sys.stdin)
+        and _isatty(sys.stdout)
+        and term != "dumb"
+        and (sys.platform == "win32" or bool(term))
+    )
 
 
 def _require_terminal() -> None:
@@ -81,7 +87,7 @@ def _require_terminal() -> None:
             "TTYs (use ai-kit --help or an individual command in scripts)"
         )
     term = os.environ.get("TERM", "").strip()
-    if not term or term == "dumb":
+    if term == "dumb" or (not term and sys.platform != "win32"):
         raise MenuError(
             f"the terminal menu needs a capable terminal; TERM={term or 'unset'!r}. "
             "Set TERM to a capable value such as xterm-256color or use an individual command."
@@ -423,17 +429,18 @@ def _command_environment() -> dict[str, str]:
 
 def _command_flow(repo: Path, action: Action) -> None:
     if action.kind == "dev":
-        program = repo / "dev"
-        if not program.is_file() or not os.access(program, os.X_OK):
-            _show([f"{program} is missing or not executable"], ok=False)
+        try:
+            command = dev_command(repo, *action.args)
+        except OSError as exc:
+            _show([str(exc)], ok=False)
             return
-        command = [str(program), *action.args]
     else:
         command = [sys.executable, "-m", "ai_kit.cli", *action.args, "-C", str(repo)]
     print(f"\n$ {' '.join(command)}")
     try:
-        completed = subprocess.run(command, cwd=repo, env=_command_environment())
-    except (OSError, KeyboardInterrupt) as exc:
+        environment = _command_environment()
+        completed = subprocess.run(batch_command(command, environment), cwd=repo, env=environment)
+    except (OSError, ValueError, KeyboardInterrupt) as exc:
         _show([f"could not run {' '.join(command)}: {exc}"], ok=False)
         return
     if completed.returncode != 0:

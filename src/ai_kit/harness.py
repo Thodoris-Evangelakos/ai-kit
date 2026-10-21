@@ -23,7 +23,14 @@ import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 
-from .system import UnsafeWriteError, atomic_write_text, read_text_exact, resolve_xdg_paths
+from .system import (
+    UnsafeWriteError,
+    atomic_write_text,
+    batch_command,
+    is_link,
+    read_text_exact,
+    resolve_xdg_paths,
+)
 
 APP_NAME = "ai-kit"
 CONFIG_FILENAME = "config.toml"
@@ -99,7 +106,7 @@ def _refuse_symlinks(path: Path) -> None:
     """Refuse a config file or any ancestor that is a symlink."""
 
     for candidate in (path, *path.parents):
-        if candidate.is_symlink():
+        if is_link(candidate):
             raise HarnessError(f"refusing symlinked config path: {candidate}")
 
 
@@ -262,10 +269,9 @@ def launch_setup_harness(root: Path, name: str, protocol: Path) -> int:
 
     repository_root = Path(root)
     prompt = _setup_prompt(repository_root, Path(protocol))
-    argv = _launch_argv(executable, name, prompt)
     environment = {**os.environ, SETUP_ACTIVE_MARKER: "1"}
-
     try:
+        argv = batch_command(_launch_argv(executable, name, prompt), environment)
         _probe_prompt_support(executable, name)
     except KeyboardInterrupt:
         return 130
@@ -273,7 +279,7 @@ def launch_setup_harness(root: Path, name: str, protocol: Path) -> int:
         raise HarnessError(
             f"{name} --help did not respond within {exc.timeout:g}s; cannot confirm prompt support"
         ) from exc
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         raise HarnessError(f"could not run {name} --help: {exc}") from exc
 
     try:
@@ -306,8 +312,11 @@ def _active_session() -> str | None:
 def _probe_prompt_support(executable: str, name: str) -> None:
     """Fail clearly when ``executable`` cannot accept an initial prompt."""
 
+    environment = dict(os.environ)
+    command = batch_command([executable, "--help"], environment)
     completed = subprocess.run(
-        [executable, "--help"],
+        command,
+        env=environment,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -336,13 +345,13 @@ def _setup_prompt(root: Path, protocol: Path) -> str:
     """Build the bootstrap prompt, referring to a repository-relative protocol."""
 
     try:
-        relative = os.path.relpath(protocol, root)
+        relative = Path(os.path.relpath(protocol, root)).as_posix()
     except ValueError:  # pragma: no cover - different drives (Windows)
         relative = str(protocol)
     return (
         "You are running the AI Kit repository setup harness. "
         "Read the repository rules in AGENTS.md and any instruction files it points to, "
-        f"then follow the AI Kit setup protocol at {relative!r} "
+        f"then follow the AI Kit setup protocol at `{relative}` "
         "(a repository-relative path). Perform only the pending setup work described "
         "by that protocol. Never launch `ai-kit setup` or another agent harness "
         "recursively from inside this session. When the pending setup is complete, "

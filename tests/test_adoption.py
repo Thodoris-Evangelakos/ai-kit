@@ -7,6 +7,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -54,6 +55,7 @@ def commit(root: Path) -> str:
     return git(root, "rev-parse", "HEAD")
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_failed_python_check_is_recorded_without_changing_source(tmp_path: Path) -> None:
     root = repo(tmp_path)
     (root / "README.md").write_text("Run `pytest` to check this project.\n", encoding="utf-8")
@@ -93,6 +95,7 @@ def test_failed_python_check_is_recorded_without_changing_source(tmp_path: Path)
     assert all(state in inventory for state in ("CLAIMED", "OBSERVED", "INFERRED", "UNKNOWN"))
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_dev_check_runs_in_copy_and_existing_artifacts_are_preserved(tmp_path: Path) -> None:
     root = repo(tmp_path)
     (root / "README.md").write_text("Run ./dev verify.\n")
@@ -133,6 +136,7 @@ def test_missing_check_stays_unknown(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is unavailable")
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_node_builtin_test_failure_is_an_honest_baseline(tmp_path: Path) -> None:
     root = repo(tmp_path)
     (root / "package.json").write_text('{"scripts":{"test":"node --test"}}\n')
@@ -152,6 +156,7 @@ def test_node_builtin_test_failure_is_an_honest_baseline(tmp_path: Path) -> None
     assert (root / "app.js").read_text() == "module.exports = 1;\n"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_skipped_python_test_cannot_make_a_green_baseline(tmp_path: Path) -> None:
     root = repo(tmp_path)
     (root / "pyproject.toml").write_text('[project]\nname = "example"\n')
@@ -171,6 +176,7 @@ def test_skipped_python_test_cannot_make_a_green_baseline(tmp_path: Path) -> Non
     assert result.checks["unit"].counts["skipped"] == 1
 
 
+@pytest.mark.usefixtures("symlinks")
 def test_external_symlink_prevents_execution(tmp_path: Path) -> None:
     root = repo(tmp_path)
     source = root / "app.txt"
@@ -189,6 +195,7 @@ def test_external_symlink_prevents_execution(tmp_path: Path) -> None:
     assert source.read_text() == "original\n"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_dev_output_with_skipped_tests_is_not_pass(tmp_path: Path) -> None:
     root = repo(tmp_path)
     dev = root / "dev"
@@ -203,6 +210,7 @@ def test_dev_output_with_skipped_tests_is_not_pass(tmp_path: Path) -> None:
     assert result.status == "unknown"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_application_permission_failure_remains_a_failure(tmp_path: Path) -> None:
     root = repo(tmp_path)
     dev = root / "dev"
@@ -220,6 +228,7 @@ def test_application_permission_failure_remains_a_failure(tmp_path: Path) -> Non
     assert json.loads(result.baseline_path.read_text())["status"] == "fail"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_landlock_blocks_absolute_write_to_source(tmp_path: Path) -> None:
     root = repo(tmp_path)
     source = root / "app.txt"
@@ -265,6 +274,7 @@ def test_landlock_failure_never_runs_check_unconfined(
         assert source.read_text() == "original\n"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_recheck_baseline_uses_recorded_command_and_confinement(tmp_path: Path) -> None:
     root = repo(tmp_path)
     source = root / "app.txt"
@@ -339,6 +349,7 @@ def _extend_baseline(root: Path, name: str, entry: dict[str, object]) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_recheck_baseline_honors_setup_discovery_records(tmp_path: Path) -> None:
     root = repo(tmp_path)
     dev = root / "dev"
@@ -367,6 +378,7 @@ def test_recheck_baseline_honors_setup_discovery_records(tmp_path: Path) -> None
     assert not comparison.unresolved
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_unrecognized_check_without_discovery_marker_stays_unknown(tmp_path: Path) -> None:
     root = repo(tmp_path)
     dev = root / "dev"

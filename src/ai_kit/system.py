@@ -3,7 +3,7 @@
 This module is deliberately limited to deterministic, low-level operations that
 other AI Kit components can share:
 
-* Linux XDG base-directory resolution for AI Kit's global state;
+* XDG base-directory resolution for AI Kit's global state;
 * discovery and inspection of Git repositories via the installed ``git`` CLI;
 * safe, atomic text writes that refuse to overwrite unexpected content.
 
@@ -15,14 +15,68 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 APP_NAME = "ai-kit"
+
+
+def is_link(path: Path) -> bool:
+    """Treat Windows junctions like symlinks at repository write boundaries."""
+
+    try:
+        metadata = path.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    return stat.S_ISLNK(metadata.st_mode) or getattr(metadata, "st_reparse_tag", 0) == getattr(
+        stat, "IO_REPARSE_TAG_MOUNT_POINT", -1
+    )
+
+
+def dev_command(root: Path, *args: str) -> list[str]:
+    """Resolve the project command without relying on Unix shebang execution."""
+
+    dev = root / "dev"
+    if sys.platform == "win32" and (root / "dev.cmd").exists():
+        dev = root / "dev.cmd"
+    if is_link(dev) or not dev.is_file() or not os.access(dev, os.X_OK):
+        raise OSError(f"{dev} is missing or not executable (symlinks are refused)")
+    if sys.platform != "win32" or dev.suffix == ".cmd":
+        return [str(dev), *args]
+    first_line = dev.read_text(encoding="utf-8").splitlines()[:1]
+    if first_line and first_line[0].startswith("#!") and "python" in first_line[0]:
+        return [sys.executable, str(dev), *args]
+    shell = shutil.which("sh")
+    if shell is None:
+        git = shutil.which("git")
+        candidate = Path(git).parent.parent / "bin/sh.exe" if git else None
+        if candidate is not None and candidate.is_file():
+            shell = str(candidate)
+    if shell is None:
+        raise OSError("a shell dev script needs Git for Windows (sh), or provide dev.cmd")
+    return [shell, str(dev), *args]
+
+
+def batch_command(argv: list[str], environment: dict[str, str]) -> list[str] | str:
+    """Quote Windows batch commands without expanding path characters as shell syntax."""
+
+    if sys.platform != "win32" or Path(argv[0]).suffix.lower() not in {".cmd", ".bat"}:
+        return argv
+    # Expand arguments once so cmd cannot expand percent signs in repository paths.
+    for index, argument in enumerate(argv):
+        if any(char in argument for char in ('"', "\r", "\n", "\0")):
+            raise ValueError("Windows batch arguments cannot contain quotes or newlines")
+        environment[f"AI_KIT_BATCH_ARG_{index}"] = argument
+    args = " ".join(f'"%AI_KIT_BATCH_ARG_{index}%"' for index in range(len(argv)))
+    shell = os.environ.get("COMSPEC", "cmd.exe")
+    return f'"{shell}" /d /v:off /s /c "{args}"'
+
 
 XDG_CONFIG_HOME = "XDG_CONFIG_HOME"
 XDG_DATA_HOME = "XDG_DATA_HOME"
@@ -80,7 +134,7 @@ def _xdg_home(
 
 @dataclass(frozen=True, slots=True)
 class XdgPaths:
-    """Resolved Linux XDG base directories and AI Kit's namespaced subdirectories."""
+    """Resolved XDG base directories and AI Kit's namespaced subdirectories."""
 
     config_home: Path
     data_home: Path
@@ -94,7 +148,7 @@ class XdgPaths:
         env: Mapping[str, str] | None = None,
         home: Path | str | None = None,
     ) -> XdgPaths:
-        """Resolve XDG directories from ``env`` with sensible Linux fallbacks."""
+        """Resolve XDG directories from ``env`` with portable home-directory fallbacks."""
 
         environment = os.environ if env is None else env
         if home is None:
@@ -363,6 +417,12 @@ def sha256_text(content: str, *, encoding: str = "utf-8") -> str:
     return _sha256_bytes(content.encode(encoding))
 
 
+def sha256_managed_text(content: str) -> str:
+    """Hash generated text consistently across Git's LF/CRLF checkout conversion."""
+
+    return sha256_text(content.replace("\r\n", "\n"))
+
+
 def sha256_file(path: Path | str, *, chunk_size: int = 1 << 20) -> str:
     """Return a ``sha256:<hex>`` digest for the file at ``path``."""
 
@@ -438,7 +498,7 @@ def atomic_write_text(
         raise ValueError("provide at most one of expected_content or expected_digest")
 
     target = Path(path)
-    if target.is_symlink():
+    if is_link(target):
         raise UnsafeWriteError(f"refusing to overwrite symlink {target}")
     exists = target.exists()
     previous_digest: str | None = None

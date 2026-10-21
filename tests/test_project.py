@@ -25,6 +25,28 @@ from ai_kit.project import (
 )
 
 
+@pytest.mark.parametrize("block_mode", [False, True])
+def test_windows_checkout_line_endings_do_not_hide_content_drift(tmp_path, block_mode):
+    from ai_kit.setup import prepare_setup
+
+    root = repo(tmp_path)
+    init_project(root)
+    if block_mode:
+        prepare_setup(root)
+    lock = load_lock(root)
+    for relative in (*lock.generated, *lock.blocks, ".ai/profile.toml", "ai-kit.lock"):
+        path = root / relative
+        path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    assert sync_project(root, check=True).clean
+    set_profile_modules(root, ("strict-verification", "optmem"))
+    assert sync_project(root, check=True).clean
+    agents = root / "AGENTS.md"
+    edited = agents.read_bytes().replace(b"# Project agent guide", b"# Human edit")
+    agents.write_bytes(edited)
+    assert sync_project(root, check=True).problems
+    assert agents.read_bytes() == edited
+
+
 def repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
     return tmp_path
@@ -38,7 +60,7 @@ def test_init_sync_doctor_and_idempotence(tmp_path: Path) -> None:
     assert "AGENTS.md" in load_lock(root).generated
     assert (root / ".agents/skills/manage-goal/SKILL.md").is_file()
     assert (root / ".ai/current/STATUS.md").is_file()
-    assert (root / "dev").stat().st_mode & 0o111
+    assert os.access(root / "dev", os.X_OK)
     assert ".ai-local/" in (root / ".gitignore").read_text()
     assert not init_project(root).changes
     assert sync_project(root, check=True).clean
@@ -117,7 +139,11 @@ def test_professional_workflow_calls_project_commands(tmp_path: Path) -> None:
     assert len(actions) == 2
     assert all(re.fullmatch(r"[\w/-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+", action) for action in actions)
     assert "fetch-depth: 0" in workflow
-    assert re.findall(r"run: (.+)", workflow) == ["./dev setup", "./dev verify"]
+    assert "os: [ubuntu-latest, windows-latest]" in workflow
+    assert re.findall(r"run: (.+)", workflow) == [
+        "${{ runner.os == 'Windows' && './dev.cmd setup' || './dev setup' }}",
+        "${{ runner.os == 'Windows' && './dev.cmd verify' || './dev verify' }}",
+    ]
     lock = (root / "ai-kit.lock").read_bytes()
     assert sync_project(root, check=True).clean
     assert sync_project(root).clean

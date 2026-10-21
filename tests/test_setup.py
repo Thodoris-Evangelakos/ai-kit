@@ -6,6 +6,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -120,9 +121,11 @@ def test_prepare_preserves_custom_instructions_modes_and_dirty_work(tmp_path: Pa
     agents = root / "AGENTS.md"
     agents.write_text("# House rules\n\nKeep it small.\n")
     os.chmod(agents, 0o640)
+    agents_mode = stat.S_IMODE(agents.stat().st_mode)
     claude = root / "CLAUDE.md"
     claude.write_text("# Claude notes\n\nHuman text.\n")
     os.chmod(claude, 0o600)
+    claude_mode = stat.S_IMODE(claude.stat().st_mode)
     intent = root / ".ai/intent/product.md"
     intent.parent.mkdir(parents=True)
     intent.write_text("# Approved requirements\n\nDo not rewrite me.\n")
@@ -140,8 +143,8 @@ def test_prepare_preserves_custom_instructions_modes_and_dirty_work(tmp_path: Pa
     assert human_bytes(agents.read_text(), "AGENTS.md") == agents_before
     assert human_bytes(claude.read_text(), "CLAUDE.md") == claude_before
     assert "@AGENTS.md" in claude.read_text()
-    assert stat.S_IMODE(agents.stat().st_mode) == 0o640
-    assert stat.S_IMODE(claude.stat().st_mode) == 0o600
+    assert stat.S_IMODE(agents.stat().st_mode) == agents_mode
+    assert stat.S_IMODE(claude.stat().st_mode) == claude_mode
     assert intent.read_text() == "# Approved requirements\n\nDo not rewrite me.\n"
     assert (root / "src/app.py").read_text() == "VALUE = 1  # dirty local edit\n"
     assert (root / "notes.txt").read_text() == "untracked work\n"
@@ -171,6 +174,7 @@ def test_prepare_rejects_block_marker_collision(tmp_path: Path) -> None:
         prepare_setup(root)
 
 
+@pytest.mark.usefixtures("symlinks")
 def test_prepare_rejects_symlinked_instruction_file(tmp_path: Path) -> None:
     root = repo(tmp_path)
     outside = tmp_path / "outside.md"
@@ -303,13 +307,18 @@ def test_finalize_refuses_without_snapshot(tmp_path: Path) -> None:
     write_report(root)
     import shutil
 
-    shutil.rmtree(root / ".ai-local/setup/original")
+    def remove_readonly(function, path, _error):
+        os.chmod(path, stat.S_IWRITE)
+        function(path)
+
+    shutil.rmtree(root / ".ai-local/setup/original", onerror=remove_readonly)
 
     with pytest.raises(SetupError, match="snapshot"):
         finalize_setup(root)
     assert setup_status(root) == "pending"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_finalize_success_clears_pending_and_keeps_blocks(tmp_path: Path) -> None:
     root = repo(tmp_path)
     (root / "AGENTS.md").write_text("# House rules\n")
@@ -351,6 +360,7 @@ def test_webapp_profile_requires_acceptance_and_runtime_errors(tmp_path: Path) -
         finalize_setup(root)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_baseline_custom_discovery_measured_on_original(tmp_path: Path) -> None:
     root = repo(tmp_path)
     write_dev(root)
@@ -368,6 +378,7 @@ def test_baseline_custom_discovery_measured_on_original(tmp_path: Path) -> None:
     assert setup_status(root) == "completed"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_inherited_dev_failure_remains_recorded(tmp_path: Path) -> None:
     root = repo(tmp_path)
     write_dev(root, FAILING_DEV)
@@ -466,6 +477,8 @@ def test_existing_dev_is_never_silently_replaced(tmp_path: Path) -> None:
     assert (root / "dev").read_text() == before
 
 
+@pytest.mark.usefixtures("symlinks")
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_internal_symlink_is_captured_as_a_link(tmp_path: Path) -> None:
     root = repo(tmp_path)
     (root / "real.txt").write_text("real\n")
@@ -486,6 +499,7 @@ def test_internal_symlink_is_captured_as_a_link(tmp_path: Path) -> None:
     assert setup_status(root) == "completed"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux Landlock")
 def test_untracked_cache_churn_is_excluded_but_tracked_files_are_kept(tmp_path: Path) -> None:
     root = repo(tmp_path)
     cache = root / ".venv"
@@ -505,6 +519,7 @@ def test_untracked_cache_churn_is_excluded_but_tracked_files_are_kept(tmp_path: 
     assert setup_status(root) == "completed"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX file modes or special files")
 def test_unsupported_preservation_shape_is_rejected(tmp_path: Path) -> None:
     root = repo(tmp_path)
     os.mkfifo(root / "pipe")
